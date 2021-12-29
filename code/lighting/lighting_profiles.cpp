@@ -5,6 +5,7 @@
 #include "lighting/lighting.h"
 #include "lighting/lighting_profiles.h"
 #include "parse/parselo.h"
+#include <corecrt_math.h>
 
 //TODO: maybe a parsehi.cpp would be in order here?
 bool optional_parse_into_float(const SCP_string &fieldname, float* valuetarget)
@@ -155,6 +156,11 @@ piecewise_power_curve_intermediates lighting_profile::current_piecewise_intermed
 piecewise_power_curve_intermediates lighting_profile::calc_intermediates(piecewise_power_curve_values input){
 
 	piecewise_power_curve_intermediates ppci;
+	CLAMP(input.toe_length, 0.0f, 1.0f);
+	CLAMP(input.toe_strength, 0.0f, 1.0f);
+	CLAMP(input.shoulder_angle, 0.0f, 1.0f);
+	CLAMP(input.shoulder_length, 0.0f, 1.0f);
+	input.shoulder_strength = fmax(0.0f,input.shoulder_strength);
 
 	ppci.x0 = input.toe_length * 0.5f; //L,F,P
 	ppci.y0 = (1.0f - input.toe_strength) * ppci.x0; //L
@@ -163,8 +169,10 @@ piecewise_power_curve_intermediates lighting_profile::calc_intermediates(piecewi
 	float y1_offset = (1.0f - input.shoulder_length) * remainingY;
 	ppci.x1 = ppci.x0 + y1_offset; //F,P
 	float y1 = ppci.y0 + y1_offset;
-	float extraW = exp2(input.shoulder_length) - 1.0f;
+	float extraW = exp2f(input.shoulder_length) - 1.0f;
 	float W = initialW + extraW;
+
+
 	float overshootX = (W * 2.0f) * input.shoulder_strength + (ppci.x0-ppci.y0);
 	float overshootY = 0.5f * input.shoulder_angle;
 
@@ -183,9 +191,18 @@ piecewise_power_curve_intermediates lighting_profile::calc_intermediates(piecewi
 }
 void lighting_profile::lab_set_exposure(float exIn){
 	default_profile.exposure = exIn;
-};
+}
 
 
 void lighting_profile::lab_set_tonemapper(TonemapperAlgorithm tnin){
 	default_profile.tonemapper = tnin;
-};
+}
+
+void lighting_profile::lab_set_ppc(piecewise_power_curve_values ppcin ){
+	default_profile.ppc_values = ppcin;
+
+}
+
+piecewise_power_curve_values lighting_profile::lab_get_ppc(){
+	return default_profile.ppc_values;
+}
