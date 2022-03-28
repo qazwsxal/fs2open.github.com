@@ -115,6 +115,8 @@ int fvi_ray_sphere(vec3d *intp, const vec3d *p0, const vec3d *p1, const vec3d *s
 // Fast ray-box intersection taken from Graphics Gems I, pages 395,736.
 int fvi_ray_boundingbox(const vec3d *min, const vec3d *max, const vec3d * p0, const vec3d *pdir, vec3d *hitpt );
 
+int qaz_boundingbox(const vec3d *min, const vec3d *max, const vec3d * p0, const vec3d *pdir, vec3d *hitpt );
+
 // sphere polygon collision prototypes
 
 // Given a polygon vertex list and a moving sphere, find the first contact the sphere makes with the edge, if any

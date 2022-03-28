@@ -405,6 +405,31 @@ int fvi_ray_boundingbox(const vec3d *min, const vec3d *max, const vec3d * p0, co
 	return 1;
 }
 
+
+int qaz_boundingbox(const vec3d *min, const vec3d *max, const vec3d * p0, const vec3d *pdir, vec3d *hitpt ) {
+    vec3d* neg_max_shifted = new vec3d;
+    vec3d* p0_shifted = new vec3d;
+    vec3d* pdir_recip = new vec3d;
+    vec3d* max_p0_sub = new vec3d;
+
+    for (int i = 0; i < 3; i++) {
+		neg_max_shifted->a1d[i] =  - (max->a1d[i] - min->a1d[i]);
+        p0_shifted->a1d[i] =  p0->a1d[i] - min->a1d[i];
+	}
+    for (int i = 0; i < 3; i++) {
+		pdir_recip->a1d[i] =  1.0f/(pdir->a1d[i]);
+        max_p0_sub->a1d[i] = p0_shifted->a1d[i] + neg_max_shifted->a1d[i];
+	}
+    float t_near = fmin(vm_vec_dot(pdir_recip, neg_max_shifted), vm_vec_dot(pdir_recip, max_p0_sub));
+    float t_far = fmax(vm_vec_dot(pdir_recip, neg_max_shifted), vm_vec_dot(pdir_recip, max_p0_sub));
+
+    if (t_near > t_far) {
+		vm_vec_scale_add(hitpt, p0, pdir, t_near);
+		return 1;
+	}
+    return 0;
+}
+
 /**
  * Given largest componant of normal, return i & j
  * If largest componant is negative, swap i & j
