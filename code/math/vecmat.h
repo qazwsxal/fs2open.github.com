@@ -112,6 +112,14 @@ void vm_vec_sub(vec3d *dest, const vec3d *src0, const vec3d *src1);
 //dest can equal source
 void vm_vec_sub2(vec3d *dest, const vec3d *src);
 
+// multiplies (element wise) one vector with another, fills in dest, returns ptr to dest
+// ok for dest to equal either source, but should use vm_vec_sub2() if so
+void vm_vec_mul(vec3d* dest, const vec3d* src0, const vec3d* src1);
+
+// multiplies (element wise) one vector with another, returns ptr to dest
+// dest can equal source
+void vm_vec_mul2(vec3d* dest, const vec3d* src);
+
 //averages n vectors
 vec3d *vm_vec_avg_n(vec3d *dest, int n, const vec3d src[]);
 

@@ -210,6 +210,28 @@ void vm_vec_sub2(vec3d *dest, const vec3d *src)
 	dest->xyz.z -= src->xyz.z;
 }
 
+
+// multiplies (element wise) one vector with another. returns ptr to dest
+// ok for dest to equal either source, but should use vm_vec_mul2() if so
+// dest = src0 * src1
+void vm_vec_mul(vec3d* dest, const vec3d* src0, const vec3d* src1)
+{
+	dest->xyz.x = src0->xyz.x * src1->xyz.x;
+	dest->xyz.y = src0->xyz.y * src1->xyz.y;
+	dest->xyz.z = src0->xyz.z * src1->xyz.z;
+}
+
+// multiplies (element wise) one vector with another, returns ptr to dest
+// dest can equal source
+// dest *= src
+void vm_vec_mul2(vec3d* dest, const vec3d* src)
+{
+	dest->xyz.x *= src->xyz.x;
+	dest->xyz.y *= src->xyz.y;
+	dest->xyz.z *= src->xyz.z;
+}
+
+
 //averages n vectors. returns ptr to dest
 //dest can equal any vector in src[]
 //dest = sum(src[]) / n

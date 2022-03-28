@@ -405,29 +405,75 @@ int fvi_ray_boundingbox(const vec3d *min, const vec3d *max, const vec3d * p0, co
 	return 1;
 }
 
+/**
+ * Finds intersection of a ray and an axis-aligned bounding box
+ *
+ * Given a ray with origin at p0, and direction pdir, this function
+ * returns non-zero if that ray intersects an axis-aligned bounding box
+ * from min to max.   If there was an intersection, then hitpt will contain
+ * the point where the ray begins inside the box.
+ * Fast ray-box intersection based on "slabs" method from Real Time Rendering 4th Ed. p 959
+ * Vectorized by qaz
+ */
+int qaz_boundingbox(const vec3d* min, const vec3d* max, const vec3d* p0, const vec3d* pdir, vec3d* hitpt)
+{
+	vec3d max_shifted;
+	vec3d min_shifted;
+	vec3d pdir_recip;
+	vec3d t_maxes;
+	vec3d t_mins;
+	vec3d t_nears;
+	vec3d t_fars;
 
-int qaz_boundingbox(const vec3d *min, const vec3d *max, const vec3d * p0, const vec3d *pdir, vec3d *hitpt ) {
-    vec3d* neg_max_shifted = new vec3d;
-    vec3d* p0_shifted = new vec3d;
-    vec3d* pdir_recip = new vec3d;
-    vec3d* max_p0_sub = new vec3d;
-
-    for (int i = 0; i < 3; i++) {
-		neg_max_shifted->a1d[i] =  - (max->a1d[i] - min->a1d[i]);
-        p0_shifted->a1d[i] =  p0->a1d[i] - min->a1d[i];
+	// Check if tay origin inside bounding box
+	bool is_inside = true;
+	for (int i = 0; i < 3; i++) {
+		is_inside = is_inside && (min->a1d[i] < p0->a1d[i]) && (max->a1d[i] > p0->a1d[i]);
 	}
-    for (int i = 0; i < 3; i++) {
-		pdir_recip->a1d[i] =  1.0f/(pdir->a1d[i]);
-        max_p0_sub->a1d[i] = p0_shifted->a1d[i] + neg_max_shifted->a1d[i];
-	}
-    float t_near = fmin(vm_vec_dot(pdir_recip, neg_max_shifted), vm_vec_dot(pdir_recip, max_p0_sub));
-    float t_far = fmax(vm_vec_dot(pdir_recip, neg_max_shifted), vm_vec_dot(pdir_recip, max_p0_sub));
-
-    if (t_near > t_far) {
-		vm_vec_scale_add(hitpt, p0, pdir, t_near);
+	if (is_inside) {
+		*hitpt = *p0;
 		return 1;
 	}
-    return 0;
+	// Shift BB so ray origin is at (0,0,0)
+	vm_vec_sub(&max_shifted, max, p0);
+	vm_vec_sub(&min_shifted, min, p0);
+
+	// Calc reciprocal of ray "velocity"
+	for (int i = 0; i < 3; i++) {
+		pdir_recip.a1d[i] = 1.0f / (pdir->a1d[i]);
+	}
+
+	// We wish to know how "long" it takes for the ray to intersect with each plane of the bounding box.
+	// As we're using an AABB, we can do this by looking at each axis seperately.
+	// Standard equations of time = distance/speed, vectorized, (gotta go fast baybee)
+	vm_vec_mul(&t_maxes, &max_shifted, &pdir_recip);
+	vm_vec_mul(&t_mins, &min_shifted, &pdir_recip);
+
+	// The slab method relies on knowing when the ray enters each slab, calculating min/max gives a form where
+	// (t_nears[i],t_fars[i]) is a pair defining the enter and exit time of slab i
+	for (int i = 0; i < 3; i++) {
+		t_nears.a1d[i] = fmin(t_maxes.a1d[i], t_mins.a1d[i]);
+		t_fars.a1d[i] = fmax(t_maxes.a1d[i], t_mins.a1d[i]);
+	}
+
+	// Here's where it gets a bit weird.
+	// max(t_nears) gives the time the ray enters the last slab
+	// min(t_fars) gives the time the ray exits the first slab
+
+	float t_near_max = fmax(t_nears.a1d[0], fmax(t_nears.a1d[1], t_nears.a1d[2]));
+	float t_far_min = fmin(t_fars.a1d[0], fmin(t_fars.a1d[1], t_fars.a1d[2]));
+
+	// If the ray enters the last slab before it exits the first slab (min(t_fars) > max(t_nears))
+	// Then the ray intersects with the bounding box
+	// but if t_far_min is -ve, then the ray *entered and left* the bbox in the past, so we're on the wrong side of it.
+	if (t_far_min > t_near_max) {
+
+		// So calculate hitpt as being where we *leave* the bounding box
+		vm_vec_scale_add(hitpt, p0, pdir, t_near_max);
+
+		return 1;
+	}
+	return 0;
 }
 
 /**
