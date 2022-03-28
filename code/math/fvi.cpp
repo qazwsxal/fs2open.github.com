@@ -466,7 +466,7 @@ int qaz_boundingbox(const vec3d* min, const vec3d* max, const vec3d* p0, const v
 	// If the ray enters the last slab before it exits the first slab (min(t_fars) > max(t_nears))
 	// Then the ray intersects with the bounding box
 	// but if t_far_min is -ve, then the ray *entered and left* the bbox in the past, so we're on the wrong side of it.
-	if (t_far_min > t_near_max) {
+	if ((t_far_min > t_near_max) && (t_far_min > 0.0)) {
 
 		// So calculate hitpt as being where we *leave* the bounding box
 		vm_vec_scale_add(hitpt, p0, pdir, t_near_max);
