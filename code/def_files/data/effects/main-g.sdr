@@ -111,9 +111,9 @@ in VertexOutput {
 #ifdef FLAG_ENV_MAP
 	vec3 envReflect;
 #endif
-#ifdef FLAG_NORMAL_MAP
-	mat3 tangentMatrix;
-#endif
+
+mat3 tangentMatrix;
+
 #ifdef FLAG_FOG
 	float fogDist;
 #endif
@@ -139,9 +139,9 @@ out VertexOutput {
 #ifdef FLAG_ENV_MAP
 	vec3 envReflect;
 #endif
-#ifdef FLAG_NORMAL_MAP
-	mat3 tangentMatrix;
-#endif
+
+mat3 tangentMatrix;
+
 #ifdef FLAG_FOG
 	float fogDist;
 #endif
