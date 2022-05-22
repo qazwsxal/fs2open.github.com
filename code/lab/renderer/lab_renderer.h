@@ -96,6 +96,9 @@ public:
 
 	void useBackground(const SCP_string& mission_name);
 
+	SCP_string currentMissionBackground;
+
+
 	static void setAAMode(AntiAliasMode mode) {
 		Gr_aa_mode = mode;
 
@@ -182,7 +185,6 @@ private:
 	float exposureLevel;
 	TextureQuality textureQuality;
 	SCP_string currentTeamColor;
-	SCP_string currentMissionBackground;
 
 	std::unique_ptr<LabCamera> labCamera;
 

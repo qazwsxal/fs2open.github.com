@@ -22,6 +22,7 @@
 #include "ai/aibig.h"
 #include "ai/aigoals.h"
 #include "ai/aiinternal.h"
+#include "ai/ailua.h"
 #include "asteroid/asteroid.h"
 #include "autopilot/autopilot.h"
 #include "cmeasure/cmeasure.h"
@@ -133,6 +134,8 @@ const char *Mode_text[MAX_AI_BEHAVIORS] = {
 	"BAY_DEPART",
 	"SENTRYGUN",
 	"WARP_OUT",
+	"FLY_TO_SHIP",
+	"LUA_AI"
 };
 
 //	Submode text is only valid for CHASE mode.
@@ -12892,11 +12895,12 @@ void ai_maybe_evade_locked_missile(object *objp, ai_info *aip)
 				case AIM_PLAY_DEAD:
 				case AIM_BAY_DEPART:
 				case AIM_SENTRYGUN:
+				case AIM_LUA:
 					break;
 				case AIM_WARP_OUT:
 					break;
 				default:
-					Int3();			//	Hey, what mode is it?
+					UNREACHABLE("Unknown AI Mode %d! Get a coder!", aip->mode);
 					break;
 				}
 			}
@@ -12954,9 +12958,10 @@ void maybe_evade_dumbfire_weapon(ai_info *aip)
 	case AIM_SENTRYGUN:
 	case AIM_WARP_OUT:
 	case AIM_FLY_TO_SHIP:
+	case AIM_LUA:
 		return;
 	default:
-		Int3();	//	Bogus mode!
+		UNREACHABLE("Unknown AI Mode %d! Get a coder!", aip->mode);
 		return;
 	}
 
@@ -13022,9 +13027,10 @@ void maybe_evade_dumbfire_weapon(ai_info *aip)
 		case AIM_BAY_EMERGE:
 		case AIM_BAY_DEPART:
 		case AIM_SENTRYGUN:
+		case AIM_LUA:
 			break;
 		default:
-			Int3();	//	Bogus mode!
+			UNREACHABLE("Unknown AI Mode %d! Get a coder!", aip->mode);
 		}
 	}
 }
@@ -13509,7 +13515,6 @@ void ai_sentrygun()
 
 /**
  * Execute behavior given by aip->mode.
- * @todo Complete the AIM_GET_BEHIND option
  */
 void ai_execute_behavior(ai_info *aip)
 {
@@ -13592,6 +13597,15 @@ void ai_execute_behavior(ai_info *aip)
 			aip->mode = AIM_NONE;
 		}
 		break;
+	case AIM_GET_BEHIND:
+		if (En_objp) {
+			Assert(En_objp->type == OBJ_SHIP);
+			// This mode is not currently implemented, but if it were, it would be called here.
+			nprintf(("AI", "AIM_GET_BEHIND called; this mode is not yet implemented\n"));
+		} else {
+			aip->mode = AIM_NONE;
+		}
+		break;
 	case AIM_BAY_EMERGE:
 		ai_bay_emerge();
 		break;
@@ -13603,12 +13617,11 @@ void ai_execute_behavior(ai_info *aip)
 		break;
 	case AIM_WARP_OUT:
 		break;		//	Note, handled directly from ai_frame().
-	case AIM_GET_BEHIND:
-		// FIXME: got this from TBP and added it here to skip the Int3() but don't really want to handle it
-		// properly until after 3.6.7 just to avoid delaying release or breaking something - taylor
+	case AIM_LUA:
+		ai_lua(aip);
 		break;
 	default:
-		Int3();		//	This should never happen -- MK, 5/12/97	
+		UNREACHABLE("Unknown AI Mode! Get a coder!");
 		break;
 	}
 
@@ -15691,8 +15704,10 @@ void ai_ship_hit(object *objp_ship, object *hit_objp, vec3d *hit_normal)
 	case AIM_WARP_OUT:
 		return;
 		break;
+	case AIM_LUA:
+		return;
 	default:
-		Int3();	//	Bogus mode!
+		UNREACHABLE("Unknown AI Mode! Get a coder!");
 	}
 
 	if (timestamp_elapsed(aip->ok_to_target_timestamp)) {
