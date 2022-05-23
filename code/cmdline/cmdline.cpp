@@ -1901,8 +1901,13 @@ bool SetCmdlineParams()
 	if ( ambient_power_arg.found() )
 		Cmdline_ambient_power = ambient_power_arg.get_float();
 
-	if ( emissive_power_arg.found() )
-		Cmdline_emissive_power = emissive_power_arg.get_float();
+	if ( emissive_power_arg.found() ){
+		//for legacy support no parm defaults to the old emissive value
+		if(emissive_power_arg.has_param())
+			Cmdline_emissive_power = emissive_power_arg.get_float();
+		else
+			Cmdline_emissive_power = 0.09f;
+	}
 
 	if ( light_power_arg.found() )
 		Cmdline_light_power = light_power_arg.get_float();
@@ -2071,8 +2076,8 @@ bool SetCmdlineParams()
 		Cmdline_no_fbo = 1;
 	}
 
-	if ( emissive_arg.found() ) {
-		Cmdline_emissive = 1;
+	if ( emissive_arg.found() && !emissive_power_arg.found()){
+		Cmdline_emissive_power = 0.09f;
 	}
 
 	if ( rearm_timer_arg.found() )
