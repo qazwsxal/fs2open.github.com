@@ -150,21 +150,15 @@ static void light_rotate(light * l)
 	}
 }
 
-void light_add_directional(const vec3d* p0, float r1, float r2, const hdr_color* new_color)
+void light_add_directional(const vec3d* p0, const hdr_color* new_color)
 {
 	Assert(new_color!= nullptr);
-	light_add_directional(p0, r1, r2, new_color->i(), new_color->r(), new_color->g(), new_color->b());
+	light_add_directional(p0, new_color->i(), new_color->r(), new_color->g(), new_color->b());
 }
 
-void light_add_directional(const vec3d *dir, float intensity, float r, float g, float b, float spec_r, float spec_g, float spec_b, bool specular)
+void light_add_directional(const vec3d *dir, float intensity, float r, float g, float b)
 {
 	if (Lighting_off) return;
-
-	if(!specular){
-		spec_r = r;
-		spec_g = g;
-		spec_b = b;
-	}
 
 	Num_lights++;
 
@@ -177,10 +171,6 @@ void light_add_directional(const vec3d *dir, float intensity, float r, float g, 
 	l.r = r;
 	l.g = g;
 	l.b = b;
-	l.spec_r = spec_r;
-	l.spec_g = spec_g;
-	l.spec_b = spec_b;
-
 	//Direcional lights not yet switched to use lighting profiles multipliers as that's part of a seperate project
 	auto lp = lighting_profile::current();
 	l.intensity = lp->directional_light_brightness.handle(intensity);
@@ -201,7 +191,7 @@ void light_add_point(const vec3d* p0, float r1, float r2, const hdr_color*  new_
 	light_add_point(p0, r1, r2, new_color->i(), new_color->r(), new_color->g(), new_color->b());
 }
 
-void light_add_point(const vec3d *pos, float r1, float r2, float intensity, float r, float g, float b, float spec_r, float spec_g, float spec_b, bool specular)
+void light_add_point(const vec3d *pos, float r1, float r2, float intensity, float r, float g, float b)
 {
 	Assertion( r1 > 0.0f, "Invalid radius r1 specified for light: %f. Radius must be > 0.0f. Examine stack trace to determine culprit.\n", r1 );
 	Assertion( r2 > 0.0f, "Invalid radius r2 specified for light: %f. Radius must be > 0.0f. Examine stack trace to determine culprit.\n", r2 );
@@ -209,12 +199,6 @@ void light_add_point(const vec3d *pos, float r1, float r2, float intensity, floa
 	if (Lighting_off) return;
 
 	if (!Lighting_flag) return;
-
-	if(!specular){
-		spec_r = r;
-		spec_g = g;
-		spec_b = b;
-	}
 
 	light l;
 	
@@ -224,10 +208,6 @@ void light_add_point(const vec3d *pos, float r1, float r2, float intensity, floa
 	l.r = r;
 	l.g = g;
 	l.b = b;
-	l.spec_r = spec_r;
-	l.spec_g = spec_g;
-	l.spec_b = spec_b;
-
 	//configurable global tuning of light qualities
 	auto lp = lighting_profile::current();
 	l.intensity = lp->point_light_brightness.handle(intensity);
@@ -246,7 +226,7 @@ void light_add_tube(const vec3d* p0, const vec3d* p1, float r1, float r2, const 
 	light_add_tube(p0, p1, r1, r2, new_color->i(), new_color->r(), new_color->g(), new_color->b());
 }
 
-void light_add_tube(const vec3d *p0, const vec3d *p1, float r1, float r2, float intensity, float r, float g, float b, float spec_r, float spec_g, float spec_b, bool specular)
+void light_add_tube(const vec3d *p0, const vec3d *p1, float r1, float r2, float intensity, float r, float g, float b)
 {
 	Assertion(r1 > 0.0f, "Invalid radius r1 specified for light: %f. Radius must be > 0.0f. Examine stack trace to determine culprit.\n", r1);
 	Assertion(r2 > 0.0f, "Invalid radius r2 specified for light: %f. Radius must be > 0.0f. Examine stack trace to determine culprit.\n", r2);
@@ -254,12 +234,6 @@ void light_add_tube(const vec3d *p0, const vec3d *p1, float r1, float r2, float 
 	if (Lighting_off) return;
 
 	if (!Lighting_flag) return;
-
-	if(!specular){
-		spec_r = r;
-		spec_g = g;
-		spec_b = b;
-	}
 
 	light l;
 
@@ -271,10 +245,6 @@ void light_add_tube(const vec3d *p0, const vec3d *p1, float r1, float r2, float 
 	l.r = r;
 	l.g = g;
 	l.b = b;
-	l.spec_r = spec_r;
-	l.spec_g = spec_g;
-	l.spec_b = spec_b;
-
 	//configurable global tuning of light qualities
 	auto lp = lighting_profile::current();
 	l.intensity = lp->tube_light_brightness.handle(intensity);
@@ -457,16 +427,10 @@ void light_add_cone(const vec3d *pos, const vec3d *dir, float angle, float inner
 	light_add_cone(pos, dir, angle, inner_angle, dual_cone, r1, r2,new_color->i(), new_color->r(), new_color->g(), new_color->b());
 }
 
-void light_add_cone(const vec3d *pos, const vec3d *dir, float angle, float inner_angle, bool dual_cone, float r1, float r2, float intensity, float r, float g, float b, float spec_r, float spec_g, float spec_b, bool specular)
+void light_add_cone(const vec3d *pos, const vec3d *dir, float angle, float inner_angle, bool dual_cone, float r1, float r2, float intensity, float r, float g, float b)
 {
 	Assertion( r1 > 0.0f, "Invalid radius r1 specified for light: %f. Radius must be > 0.0f. Examine stack trace to determine culprit.\n", r1 );
 	Assertion( r2 > 0.0f, "Invalid radius r2 specified for light: %f. Radius must be > 0.0f. Examine stack trace to determine culprit.\n", r2 );
-
-	if(!specular){
-		spec_r = r;
-		spec_g = g;
-		spec_b = b;
-	}
 
 	if ( Lighting_off ) return;
 
@@ -485,9 +449,6 @@ void light_add_cone(const vec3d *pos, const vec3d *dir, float angle, float inner
 	l.r = r;
 	l.g = g;
 	l.b = b;
-	l.spec_r = spec_r;
-	l.spec_g = spec_g;
-	l.spec_b = spec_b;
 
 	auto lp = lighting_profile::current();
 	l.intensity = lp->cone_light_brightness.handle(intensity);
