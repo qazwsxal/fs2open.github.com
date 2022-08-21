@@ -21,4 +21,5 @@ void main()
 	vec4 blendColor = vec4(srgb_to_linear(fragColor.rgb), fragColor.a);
 
 	fragOut0 = baseColor * blendColor * intensity;
+	fragOut0.a = clamp(fragOut0.a, 0.0, 1.0); // Alpha should remain between 0.0 and 1.0
 }
