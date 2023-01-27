@@ -842,8 +842,8 @@ int CFred_mission_save::save_bitmaps()
 		}
 
 		// We push a block-comment start token so that the +Neb2Flags: section is ignored by FSO >= 23.0.0
-		fso_comment_push(";;23.0.0;;");
-		required_string_fred("!*");
+		fso_comment_push(";;FSO 23.0.0;;");
+		fout_version("\n!*");
 		fso_comment_pop();
 
 		if (optional_string_fred("+Neb2Flags:")) {
@@ -854,8 +854,8 @@ int CFred_mission_save::save_bitmaps()
 		fout(" %d", Neb2_poof_flags);
 
 		// Block-comment end token
-		fso_comment_push(";;23.0.0;;");
-		required_string_fred("!*");
+		fso_comment_push(";;FSO 23.0.0;;");
+		fout_version("\n*!");
 		fso_comment_pop();
 
 		fso_comment_push(";;FSO 23.0.0;;");
