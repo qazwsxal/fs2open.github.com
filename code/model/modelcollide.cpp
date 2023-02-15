@@ -428,11 +428,15 @@ void model_collide_bsp(bsp_collision_tree *tree, int node_index)
 
 	// check the bounding box of this node. if it passes, check left and right children
 	if ( mc_ray_boundingbox( &node->min, &node->max, &Mc_p0, &Mc_direction, &hitpos ) ) {
-		if ( !(Mc->flags & MC_CHECK_RAY) && (vm_vec_dist(&hitpos, &Mc_p0) > Mc_mag) ) {
+		float dist = vm_vec_dist(&hitpos, &Mc_p0);
+		if (!(Mc->flags & MC_CHECK_RAY) && (dist > Mc_mag)) {
 			// The ray isn't long enough to intersect the bounding box
 			return;
 		}
-
+		if (Mc->num_hits && (dist >= Mc->hit_dist)) {
+			// The ray hits, but a closer intersection has already been found
+			return;
+		}
 		if ( node->leaf >= 0 ) {
 			model_collide_bsp_poly(tree, node->leaf);
 		} else {
