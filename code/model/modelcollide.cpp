@@ -448,6 +448,14 @@ void model_collide_bsp(bsp_collision_tree *tree, int node_index)
 			// The ray isn't long enough to intersect the bounding box
 			return;
 		}
+		vec3d offset; 
+		vm_vec_sub(&offset, &hitpos, &Mc_p0);
+		
+		float dist = vm_vec_mag(&offset);
+		// If the ray hits, but a closer intersection has already been found, return
+		if (!(Mc->flags & MC_COLLIDE_ALL) && Mc->num_hits && (dist >= Mc->hit_dist))
+			return;
+
 
 		if ( node->leaf >= 0 ) {
 			model_collide_bsp_poly(tree, node->leaf);
