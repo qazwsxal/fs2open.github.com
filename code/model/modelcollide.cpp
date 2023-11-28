@@ -456,11 +456,27 @@ void model_collide_bsp(bsp_collision_tree *tree, int node_index)
 		if (!(Mc->flags & MC_COLLIDE_ALL) && Mc->num_hits && (dist >= Mc->hit_dist))
 			return;
 
+
 		if ( node->leaf >= 0 ) {
 			model_collide_bsp_poly(tree, node->leaf);
 		} else {
-			if ( node->back >= 0 ) model_collide_bsp(tree, node->back);
-			if ( node->front >= 0 ) model_collide_bsp(tree, node->front);
+			// This heuristic determines which branch of the tree to take first.
+			vec3d back_mid;
+			vec3d front_mid;
+			vec3d diff;
+			// These vectors are actually double what they should be, but that doesn't matter for the calcuation.
+			vm_vec_add(&back_mid, &tree->node_list[node->back].max, &tree->node_list[node->back].min);
+			vm_vec_add(&front_mid, &tree->node_list[node->front].max, &tree->node_list[node->front].min);
+
+			vm_vec_sub(&diff, &back_mid, &front_mid);
+			// If the vector between front and back is pointing the same direction as the ray, check front first.
+			if (vm_vec_dot(&diff, &Mc_direction) > 0.0) {
+				if ( node->front >= 0 ) model_collide_bsp(tree, node->front);
+				if ( node->back >= 0 ) model_collide_bsp(tree, node->back);
+			} else {
+				if (node->back >= 0) model_collide_bsp(tree, node->back);
+				if (node->front >= 0) model_collide_bsp(tree, node->front);
+			}
 		}
 	}
 }
