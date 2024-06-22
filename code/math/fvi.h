@@ -75,11 +75,10 @@ int fvi_segment_plane(vec3d *new_pnt, const vec3d *plane_pnt, const vec3d *plane
 // checkp - The point to check
 // nv - how many verts in the poly
 // verts - the vertives for the polygon 
-// norm1 - the polygon's normal
 // u_out,vout - if not null and v_out not null and uvls not_null and point is on face, the uv's of where it hit
 // uvls - a list of uv pairs for each vertex
 // This replaces the old check_point_to_face & find_hitpoint_uv
-int fvi_point_face(const vec3d *checkp, int nv, vec3d const *const *verts, const vec3d * norm1, float *u_out, float *v_out, const uv_pair * uvls );
+int fvi_point_face(const vec3d *checkp, int nv, vec3d const *const *verts, float *u_out, float *v_out, const uv_pair * uvls );
 
 
 //maybe this routine should just return the distance and let the caller

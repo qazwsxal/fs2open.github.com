@@ -147,7 +147,7 @@ static void mc_check_face(int nv, vec3d **verts, vec3d *plane_pnt, vec3d *plane_
 	
 	// Check to see if the point of intersection is on the plane.  If so, this
 	// also finds the uv's where the ray hit.
-	if ( fvi_point_face(&hit_point, nv, verts, plane_norm, &u,&v, uvl_list ) )	{
+	if ( fvi_point_face(&hit_point, nv, verts, &u,&v, uvl_list ) )	{
 		Mc->hit_dist = dist;
 
 		Mc->hit_point = hit_point;
@@ -246,7 +246,7 @@ static void mc_check_sphereline_face( int nv, vec3d ** verts, vec3d * plane_pnt,
 	if ( check_face )	{
 		// Find the time of the sphere surface touches the plane
 		// If this is within the collision window, check to see if we hit a face
-		if ( fvi_point_face(&hit_point, nv, verts, plane_norm, &u, &v, uvl_list) ) {
+		if ( fvi_point_face(&hit_point, nv, verts, &u, &v, uvl_list) ) {
 
 			Mc->hit_dist = face_t;		
 			Mc->hit_point = hit_point;
@@ -854,7 +854,7 @@ bool mc_shield_check_common(shield_tri	*tri)
 	
 		// Check to see if the Mc_pmint of intersection is on the plane.  If so, this
 		// also finds the uv's where the ray hit.
-		if ( fvi_point_face(&hitpoint, 3, points, &tri->norm, NULL,NULL,NULL ) )	{
+		if ( fvi_point_face(&hitpoint, 3, points, NULL,NULL,NULL ) )	{
 			Mc->hit_dist = dist;
 			Mc->shield_hit_tri = (int)(tri - Mc_pm->shield.tris);
 			Mc->hit_point = hitpoint;

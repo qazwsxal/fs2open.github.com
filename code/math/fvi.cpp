@@ -406,111 +406,58 @@ int fvi_ray_boundingbox(const vec3d *min, const vec3d *max, const vec3d * p0, co
 }
 
 /**
- * Given largest componant of normal, return i & j
- * If largest componant is negative, swap i & j
- */
-static int ij_table[3][2] =        {
-							{2,1},          //pos x biggest
-							{0,2},          //pos y biggest
-							{1,0},          //pos z biggest
-						};
-
-/**
- * See if a point in inside a face by projecting into 2d. Also
+ * See if a point in inside a face.
  * finds uv's if uvls is not NULL.  
  *
  * Returns 0 if point isn't on face, non-zero otherwise.
  *
- * From Graphics Gems I, "An efficient Ray-Polygon intersection", p390
+ * From Real-Time Collision Detection "Barycentric Coordinates", p47
  *
  * @param checkp	The point to check
  * @param nv		How many verts in the poly
- * @param verts		The vertives for the polygon 
- * @param norm1		The polygon's normal
+ * @param verts		The vertices for the polygon 
  * @param u_out		If not null and v_out not null and uvls not_null and point is on face, the uv's of where it hit
  * @param vout		If not null and v_out not null and uvls not_null and point is on face, the uv's of where it hit
  * @param uvls		A list of uv pairs for each vertex
  *
- * This replaces the old check_point_to_face & find_hitpoint_uv
- * WARNING!!   In Gems, they use the code "if (u1==0)" in this function.
- * I have found several cases where this will not detect collisions it should.
- * I found two solutions:
- *   1. Declare the 'beta' variable to be a double.
- *   2. Instead of using 'if (u1==0)', compare it to a small value.
- * I chose #2 because I would rather have our code work with all floats
- * and never need doubles.   -JAS Aug22,1997
  */
-#define delta 0.0001f
-int fvi_point_face(const vec3d *checkp, int nv, vec3d const *const *verts, const vec3d * norm1, float *u_out,float *v_out, const uv_pair * uvls )
+int fvi_point_face(const vec3d* checkp,
+	int nv,
+	vec3d const* const* verts,
+	float* u_out,
+	float* v_out,
+	const uv_pair* uvls)
 {
-	const float *norm;
-	const float *P;
-	vec3d t;
-	int i0, i1,i2;
-
-	norm = (float *)norm1;
-
-	//project polygon onto plane by finding largest component of normal
-	t.xyz.x = fl_abs(norm[0]); 
-	t.xyz.y = fl_abs(norm[1]); 
-	t.xyz.z = fl_abs(norm[2]);
-
-	if (t.xyz.x > t.xyz.y) if (t.xyz.x > t.xyz.z) i0=0; else i0=2;
-	else if (t.xyz.y > t.xyz.z) i0=1; else i0=2;
-
-	if (norm[i0] > 0.0f) {
-		i1 = ij_table[i0][0];
-		i2 = ij_table[i0][1];
-	}
-	else {
-		i1 = ij_table[i0][1];
-		i2 = ij_table[i0][0];
-	}
-
-	// Have i0, i1, i2
-	P = (float *)checkp;
-	
-	float u0, u1, u2, v0, v1, v2, alpha = UNINITIALIZED_VALUE, gamma;
-	float beta;
-
-	int inter=0, i = 2;	
-
-	u0 = P[i1] - verts[0]->a1d[i1];
-	v0 = P[i2] - verts[0]->a1d[i2];
+	vec3d v0, v1, v2;
+	float bary_u = 0.0, bary_v = 0.0, bary_w = 0.0;
+	int i = 2;
+	bool inter = false;
 
 	do {
+		vm_vec_sub(&v0, verts[i - 1], verts[0]);
+		vm_vec_sub(&v1, verts[i], verts[0]);
+		vm_vec_sub(&v2, checkp, verts[0]);
+		float d00 = vm_vec_dot(&v0, &v0);
+		float d01 = vm_vec_dot(&v0, &v1);
+		float d11 = vm_vec_dot(&v1, &v1);
+		float d20 = vm_vec_dot(&v2, &v0);
+		float d21 = vm_vec_dot(&v2, &v1);
+		float denom = d00 * d11 - d01 * d01;
+		float bary_v = (d11 * d20 - d01 * d21) / denom;
+		float bary_w = (d00 * d21 - d01 * d20) / denom;
+		float bary_u = 1 - bary_v - bary_w;
+		// If we're within the barycentric coords, then break.
+		// By definition, these three to sum to 1, if any of them are greater than 1, 
+		// then another must be less than 0, hence we can skip checking >= 1.0's
+		inter = (bary_v >= 0.0f) && (bary_w >= 0.0f)  && (bary_u >= 0.0f);
 
-		u1 = verts[i-1]->a1d[i1] - verts[0]->a1d[i1]; 
-		u2 = verts[i  ]->a1d[i1] - verts[0]->a1d[i1];
+	} while ((!inter) && (++i < nv));
 
-		v1 = verts[i-1]->a1d[i2] - verts[0]->a1d[i2];
-		v2 = verts[i  ]->a1d[i2] - verts[0]->a1d[i2];
-
-
-		if ( (u1 >-delta) && (u1<delta) )	{
-			beta = u0 / u2;
-			if ((beta >=0.0f) && (beta<=1.0f))	{
-				alpha = (v0 - beta*v2)/v1;
-				inter = ((alpha>=0.0f)&&(alpha+beta<=1.0f));
-			}
-		} else {
-
-			beta = (v0*u1 - u0*v1) / (v2*u1 - u2*v1);
-			if ((beta >=0.0f) && (beta<=1.0f))	{
-				Assert(beta != UNINITIALIZED_VALUE);
-				alpha = (u0 - beta*u2)/u1;
-				inter = ((alpha>=0.0f)&&(alpha+beta<=1.0f));
-			}
-		}
-
-	} while ((!inter) && (++i < nv) );
-
-	if ( inter &&  uvls && u_out && v_out )	{
-		gamma = 1.0f - (alpha+beta);
-		*u_out = gamma * uvls[0].u + alpha*uvls[i-1].u + beta*uvls[i].u;
-		*v_out = gamma * uvls[0].v + alpha*uvls[i-1].v + beta*uvls[i].v;
+	if (inter && uvls && u_out && v_out) {
+		*u_out = bary_u * uvls[0].u + bary_v * uvls[i - 1].u + bary_w * uvls[i].u;
+		*v_out = bary_u * uvls[0].v + bary_v * uvls[i - 1].v + bary_w * uvls[i].v;
 	}
-	
+
 	return inter;
 }
 
