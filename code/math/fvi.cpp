@@ -447,8 +447,8 @@ int fvi_point_face(const vec3d* checkp,
 		float bary_w = (d00 * d21 - d01 * d20) / denom;
 		float bary_u = 1 - bary_v - bary_w;
 		// If we're within the barycentric coords, then break.
-		// By definition, these three to sum to 1, if any of them are greater than 1, 
-		// then another must be less than 0, hence we can skip checking >= 1.0's
+		// By definition, these three sum to 1, if any of them are greater than 1 (outside triangle), 
+		// then another must be less than 0 (also outside triangle), hence we can skip checking <= 1.0
 		inter = (bary_v >= 0.0f) && (bary_w >= 0.0f)  && (bary_u >= 0.0f);
 
 	} while ((!inter) && (++i < nv));
