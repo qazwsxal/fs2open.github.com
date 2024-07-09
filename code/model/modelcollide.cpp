@@ -751,7 +751,7 @@ void model_collide_parse_bsp(bsp_collision_tree *tree, void *model_ptr, int vers
 					tree->poly_centers.push_back(center / (float)new_leaf.num_verts);
 
 					leaf_buffer.push_back(new_leaf);
-
+					
 					leaf_buffer.back().next = (int)leaf_buffer.size();
 
 					next_p += next_chunk_size;
@@ -823,6 +823,217 @@ void model_collide_parse_bsp(bsp_collision_tree *tree, void *model_ptr, int vers
 	memcpy(tree->vert_list, &vert_buffer[0], sizeof(model_tmap_vert) * vert_buffer.size());
 	vert_buffer.clear();
 }
+
+bool bboxes_intersect(vec3d& bbox_1_min, vec3d& bbox_1_max, vec3d& bbox_2_min, vec3d& bbox_2_max)
+{
+	for (int i = 0; i < 3; i++) {
+		if ((bbox_1_min.a1d[i] > bbox_2_max.a1d[i]) || (bbox_2_min.a1d[i] > bbox_1_max.a1d[i])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+// Get the deepest *unique* bsp_node that intersects with our octree box.
+int bsp2octree_get_deepest_bspnode(bounding_box& bbox, const bsp_collision_tree* bsp_tree, int node_idx)
+{
+	// If it only has a leaf, then return - doesn't matter if it fits inside or not.
+	if (bsp_tree->node_list[node_idx].leaf >= 0) {
+		return node_idx;
+	}
+	// Otherwise, check children.
+	int front_idx = bsp_tree->node_list[node_idx].front;
+	bool front_intersect =
+		bboxes_intersect(bbox.min, bbox.max, bsp_tree->node_list[front_idx].min, bsp_tree->node_list[front_idx].max);
+
+	int back_idx = bsp_tree->node_list[node_idx].back;
+	bool back_intersect =
+		bboxes_intersect(bbox.min, bbox.max, bsp_tree->node_list[back_idx].min, bsp_tree->node_list[back_idx].max);
+	// Both children intersect, therefore node_idx is the deepest unique node.
+	if (front_intersect && back_intersect) {
+		return node_idx;
+	}
+	// If neither intersect, then our octree box is empty.
+	if (!front_intersect && !back_intersect) {
+		return -1;
+	}
+	// If either intersects, but the other doesn't, check them independently.
+	if (front_intersect) {
+		return bsp2octree_get_deepest_bspnode(bbox, bsp_tree, front_idx);
+	}
+	if (back_intersect) {
+		return bsp2octree_get_deepest_bspnode(bbox, bsp_tree, back_idx);
+	}
+}
+
+
+bool bbox_triangle_intersection(bounding_box &bbox, std::array<int, 3> &tri_idxs, const bsp_collision_tree* bsp_tree) {
+	// From "Fast 3D Triangle-Box Overlap Testing" - Akenine-Moller 2001
+	// Akenine-Moller considers an AABB defined by a center and a vector of half-lengths 
+	// intersecting a triangle defined by it's coordinates.
+	// Let's build those first.
+	vec3d center, hlens;
+	vm_vec_avg(&center, &bbox.min, &bbox.max);
+	vm_vec_sub(&hlens, &bbox.min, &center);
+	for (int i = 0; i < 3; i++) {
+		hlens.a1d[i] = abs(hlens.a1d[i]);
+	};
+	vec3d points[3];
+	for (int i = 0; i < 3; i++) {
+		hlens.a1d[i] = abs(hlens.a1d[i]);
+	};
+	return true;
+}
+
+// Build an octree from a leaf.
+collision_octree_intermediate bsp2octree_build_terminal_tree(bounding_box bbox, const bsp_collision_tree* bsp_tree, int leaf_idx)
+{
+
+	SCP_vector<std::array<int, 3>> tmap_vert_tris;
+	SCP_vector<ubyte> tmap_num;
+	// Collect all leaves, check for intersection with bbox.
+	while (leaf_idx >= 0) {
+		bsp_collision_leaf leaf = bsp_tree->leaf_list[leaf_idx];
+		// loop over triangles in current leaf.
+		for (int i = leaf.vert_start + 2; i < leaf.num_verts + leaf.vert_start; i++) {
+
+			// Triangle defined by leaf.vert_start, i-1, i indices.
+			// This is the same fan shape used in the old collision detection.
+			std::array<int, 3> tri_vert_idxs = {};
+			tri_vert_idxs[0] = leaf.vert_start;
+			tri_vert_idxs[1] = i - 1;
+			tri_vert_idxs[2] = i;
+			// TODO Determine bbox-triangle intersection
+			bool tri_intersects = bbox_triangle_intersection(bbox, tri_vert_idxs, bsp_tree);
+			if (tri_intersects) {
+				tmap_vert_tris.push_back(tri_vert_idxs);
+				// We do this once per triangle rather than per-leaf
+				// as we will lose the distinction of which "leaf" we're in once we're in the octree.
+				tmap_num.push_back(leaf.tmap_num);
+			};
+		};
+		leaf_idx = leaf.next;
+	};
+	// If we've got more triangles than we're allowed to store, we need to split them up
+	//
+	if (tmap_vert_tris.size() > MAX_LEAF_TRIANGLES) {
+		// TODO implement recursive terminal node splitting.
+		Error("Too many triangles in terminal node,\nyell at qaz to implement recursive node splitting.");
+	} else {
+		intermediate_leaf octree_term_leaf;
+		octree_term_leaf.tmap_vert_tris = tmap_vert_tris;
+		octree_term_leaf.tmap_num = tmap_num;
+		collision_octree_intermediate terminal_octree;
+		terminal_octree.bbox = bbox;
+		terminal_octree.leaves.push_back(octree_term_leaf);
+		terminal_octree.nodes.push_back(-1);
+		return terminal_octree;
+	};
+	//
+
+}
+
+void bsp2octree_split_terminal_node(vec3d& bbox_min,
+	vec3d& bbox_max, intermediate_leaf& big_leaf)
+{
+	// TODO oh god
+}
+
+collision_octree_intermediate bsp2_octree_merge_children(collision_octree_intermediate* children)
+{
+	collision_octree_intermediate parent;
+	// This is easy, child 0 lies at min x, min y, min z, so take min bbox from that.
+	// similar with child 7 and max bbox
+	parent.bbox.min = children[0].bbox.min;
+	parent.bbox.max = children[7].bbox.max;
+
+	// By constructing a set of child triangles, we implicitly de-duplicate the triangles.
+	std::unordered_set<std::array<int, 3>> child_tris;
+	std::unordered_map<std::array<int, 3>, int> child_tmaps;
+
+	for (int i = 0; i < 8; i++) {
+		for (const auto& leaf : children[i].leaves) {
+			for (int leaf_idx = 0; leaf_idx < leaf.tmap_vert_tris.size(); leaf_idx++) {
+				std::array<int, 3> tri = leaf.tmap_vert_tris[i];
+				child_tris.insert(tri);
+				child_tmaps[tri] = i;
+			};
+		};
+	};
+	if (child_tris.size() <= MAX_LEAF_TRIANGLES) {
+		// We can just merge these into 1 node
+		intermediate_leaf parent_leaf;
+		for (const auto& triangle : child_tris) {
+			parent_leaf.tmap_vert_tris.push_back(triangle);
+			parent_leaf.tmap_num.push_back(child_tmaps[triangle]);
+		};
+		parent.nodes.push_back(-1);
+		parent.leaves.push_back(parent_leaf);
+	} else {
+		SCP_vector<uint32_t> child_nodes;
+		for (int i = 0; i < 8; i++) {
+		};
+	};
+	return parent;
+};
+
+// Recursively calculates octree for current bbox size.
+// bsp_tree and node_idx are used to determine which bsp node to consider
+collision_octree_intermediate bsp2octree_recurse(bounding_box box, const bsp_collision_tree* bsp_tree, int node_idx)
+{
+	// the original node_idx isn't strictly needed here, 
+	// but it speeds up bsp2octree_get_deepest_bspnode 
+	// as we don't have to traverse down the entire tree each time.
+	node_idx = bsp2octree_get_deepest_bspnode(box, bsp_tree, node_idx);
+	if (node_idx == -1) {
+		// No bsp_nodes intersect with our bbox, so this node is empty.
+		collision_octree_intermediate empty_octree = {{0}, {}, box};
+		return empty_octree;
+	};
+	// Determine if new node_idx is a leaf node, if so, return the leaf.
+	if (bsp_tree->node_list[node_idx].leaf >= 0) {
+		int leaf_idx = bsp_tree->node_list[node_idx].leaf;
+		bsp2octree_build_terminal_tree(box, bsp_tree, leaf_idx);
+	}
+	// Otherwise, build child octrees
+	collision_octree_intermediate child_octrees[8];
+	// Construct midpoint of bbox so we can set child bboxes correctly.
+	vec3d box_mid;
+	vm_vec_avg(&box_mid, &box.min, &box.max);
+	for (int i = 0; i < 8; i++) {
+		// for each axis j, bitwise & current child (i 0-7) with 1 << j (001, 010, 100)
+		// to see if we use the min/mid or mid/max value (respectively) for that axis
+		bounding_box child_bbox = {};
+		for (int j = 0; j < 3; j++) {
+			child_bbox.min.a1d[j] == (i & (1 << j)) ? box.min.a1d[j] : box_mid.a1d[j];
+			child_bbox.max.a1d[j] == (i & (1 << j)) ? box_mid.a1d[j] : box.max.a1d[j];
+		}
+		child_octrees[i] = bsp2octree_recurse(child_bbox, bsp_tree, node_idx);
+	}
+	return bsp2_octree_merge_children(child_octrees);
+}
+
+
+void bsp2octree(collision_octree* octree, const bsp_collision_tree* bsp_tree)
+{
+	// Get root node of bsp_tree.
+	bsp_collision_node bsp_root_node = bsp_tree->node_list[0];
+	// build smallest cube that'll fit the bsp root node. This will be the bbox for our octree.
+	vec3d bsp_bbox_center;
+	vm_vec_avg(&bsp_bbox_center, &bsp_root_node.min, &bsp_root_node.max);
+	vec3d max_offset;
+	vm_vec_sub(&max_offset, &bsp_root_node.max, &bsp_bbox_center);
+	float bbox_max = MAX(MAX(max_offset.a1d[0], max_offset.a1d[1]), max_offset.a1d[2]);
+	max_offset.a1d[0] = bbox_max;
+	max_offset.a1d[1] = bbox_max;
+	max_offset.a1d[2] = bbox_max;
+
+
+	vm_vec_sub(&octree->bbox.min, &bsp_bbox_center, &max_offset);
+	vm_vec_add(&octree->bbox.max, &bsp_bbox_center, &max_offset);
+	bsp2octree_recurse(octree, bsp_tree, 0);
+}
+
 
 bool mc_shield_check_common(shield_tri	*tri)
 {

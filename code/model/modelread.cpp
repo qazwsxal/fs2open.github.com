@@ -70,6 +70,8 @@ SCP_vector<polymodel_instance*> Polygon_model_instances;
 
 SCP_vector<bsp_collision_tree> Bsp_collision_tree_list;
 
+SCP_vector<collision_octree> collision_octree_list;
+
 static int model_initted = 0;
 
 #ifndef NDEBUG
@@ -3507,9 +3509,10 @@ int model_load(const  char* filename, int n_subsystems, model_subsystem* subsyst
 	TRACE_SCOPE(tracing::ModelParseAllBSPTrees);
 
 	for (i = 0; i < pm->n_models; ++i) {
-		pm->submodel[i].collision_tree_index = model_create_bsp_collision_tree();
-		bsp_collision_tree* tree             = model_get_bsp_collision_tree(pm->submodel[i].collision_tree_index);
-		model_collide_parse_bsp(tree, pm->submodel[i].bsp_data, pm->version);
+		bsp_collision_tree bsp_tree;
+		model_collide_parse_bsp(&bsp_tree, pm->submodel[i].bsp_data, pm->version);
+		collision_octree octree;
+		bsp2octree(&octree, &bsp_tree);
 	}
 
 	// Find the core_radius... the minimum of 

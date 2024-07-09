@@ -392,6 +392,61 @@ struct bsp_collision_tree {
 	bool used;
 };
 
+// The maximum number of triangles to store in an collision leaf.
+// This effectively controls how "wide" leaf nodes are allowed to be. 
+// we can operate on multiple triangles simultaneously with SIMD instructions
+// 8 is a reasonable compromise here. (AVX - intel 2008, AMD 2011)
+#define MAX_LEAF_TRIANGLES 8
+
+// This handles the intermediate state when mapping from bsp trees to octrees,
+// we've figured out how bsp_leaves fit in our new octree structure, 
+// but we haven't yet de-duplicated vertices
+// Or inlined our data.
+
+struct bounding_box {
+	vec3d min;
+	vec3d max;
+};
+struct intermediate_leaf {
+	// There's duplicates here, we're not worried yet, we'll merge in the final octree.
+	SCP_vector<std::array<int, 3>> tmap_vert_tris;
+	SCP_vector<ubyte> tmap_num;
+};
+
+
+struct collision_octree_intermediate {
+	SCP_vector<int32_t> nodes;
+	SCP_vector<intermediate_leaf> leaves;
+	bounding_box bbox;
+};
+
+// holds MAX_LEAF_TRIANGLES indices into triangle vec.
+struct collision_leaf {
+	uint32_t triangle_idxs[MAX_LEAF_TRIANGLES];
+};
+
+// holds indices into vertices vec.
+struct tri_vert_idxs {
+	uint32_t v[3];
+};
+
+// Big collision octree handler
+struct collision_octree {
+
+	SCP_vector<int32_t> nodes;
+	SCP_vector<collision_leaf> leaves;
+	SCP_vector<tri_vert_idxs> triangles;
+	SCP_vector<vec3d> vertices;
+	SCP_vector<vec3d> normals;
+	SCP_vector<vec2d> uvs;
+	SCP_vector<ubyte> tri_tmap_nums;
+	// tri_invisible previously handled by tmap lookups,
+	// but with C++ vec<bool> specialisation, and the triangle list having some spatial locailty,
+	// sticking 64 lookups in a single cache line is going to give better performance. - qaz
+	SCP_vector<bool> tri_invisible; 
+	bounding_box bbox;
+	};
+
 class bsp_info
 {
 public:
@@ -1354,11 +1409,11 @@ typedef struct mc_info {
 
 int model_collide(mc_info *mc_info_obj);
 void model_collide_parse_bsp(bsp_collision_tree *tree, void *model_ptr, int version);
-
 bsp_collision_tree *model_get_bsp_collision_tree(int tree_index);
 void model_remove_bsp_collision_tree(int tree_index);
 int model_create_bsp_collision_tree();
 
+void bsp2octree(collision_octree* octree, bsp_collision_tree* bsp_tree);
 
 typedef struct mst_info {
 	int primary_bitmap;
