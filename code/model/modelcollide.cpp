@@ -869,18 +869,83 @@ int bsp2octree_get_deepest_bspnode(bounding_box& bbox, const bsp_collision_tree*
 
 bool bbox_triangle_intersection(bounding_box &bbox, std::array<int, 3> &tri_idxs, const bsp_collision_tree* bsp_tree) {
 	// From "Fast 3D Triangle-Box Overlap Testing" - Akenine-Moller 2001
+	// The same algorithm is predent in Real-Time Rendering 4ed. p974: 22.12 Triangle/Box intersection.
+	// This is based on a series of seperating-axis tests. 
+	// As soon as an axis is found where the two objects are seperate, we know they don't overlap
 	// Akenine-Moller considers an AABB defined by a center and a vector of half-lengths 
 	// intersecting a triangle defined by it's coordinates.
-	// Let's build those first.
+	// Let's build the triangle first.
+
+	vec3d verts[3] = {};
+	for (int i = 0; i < 3; i++) {
+		int vert_idx = tri_idxs[i];
+		uint point_idx = bsp_tree->vert_list[vert_idx].vertnum;
+		verts[i] = bsp_tree->point_list[point_idx];
+	};
+	// At this point, we first check to see if there is a seperating plane 
+	// between the bounding box and the bounding box of the triangle
+	// This is a litt
+	bounding_box tri_bbox = {{INFINITY, INFINITY, INFINITY}, {-INFINITY, -INFINITY, -INFINITY}};
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; i < 3; i++) {
+			tri_bbox.min.a1d[i] = MIN(tri_bbox.min.a1d[j], verts[i].a1d[j]);
+			tri_bbox.max.a1d[i] = MAX(tri_bbox.max.a1d[j], verts[i].a1d[j]);
+		};
+	};
+	if (bboxes_intersect(bbox.min, bbox.max, tri_bbox.min, tri_bbox.max)) {
+		return false;
+	}
+	// Akenine-Moller considers an AABB defined by a center and a vector of half-lengths 
+	// We simplify the problem by moving the AABB to the origin,
 	vec3d center, hlens;
 	vm_vec_avg(&center, &bbox.min, &bbox.max);
 	vm_vec_sub(&hlens, &bbox.min, &center);
 	for (int i = 0; i < 3; i++) {
 		hlens.a1d[i] = abs(hlens.a1d[i]);
 	};
-	vec3d points[3];
+	// we need to move our triangle as well,
+	// so we just subtract the AABB center from our triangle coordinate locations.
 	for (int i = 0; i < 3; i++) {
-		hlens.a1d[i] = abs(hlens.a1d[i]);
+		vm_vec_sub2(&verts[i], &center);
+	};
+	// Next step is a triangle plane/bbox intersect.
+	// First, compute triangle norm.
+	// We'll also need vectors for the triangle edges, so compute those too.
+	vec3d edges[3] = {};
+	vec3d tri_norm;
+	for (int i = 0; i < 3; i++) {
+		vm_vec_sub(&edges[i], &verts[(i + 1) % 3] , & verts[i % 3]);
+	};
+	vm_vec_cross(&tri_norm, &edges[0], &edges[1]);
+	vm_vec_normalize(&tri_norm);
+	// We can now use an AABB/plane intersection algorithm to check.
+	float e = 0.0;
+	for (int i = 0; i < 3; i++) {
+		e += hlens.a1d[i] * abs(tri_norm.a1d[i]);
+	};
+	float plane_offset = -vm_vec_dot(&tri_norm, &verts[0]);
+	float s = vm_vec_dot(&tri_norm, &center) + plane_offset;
+	if (((s - e) > 0.0) || ((s + e) < 0)) {
+		return false;
+	};
+	// If we still haven't found a seperating plane, it's time for a complicated final check. 
+	// This involves figuring out all 9 seperating planes 
+	// where both an edge of the triangle *and* a basis vector are perpendicular to it.
+	//  
+	// Idk how to explain this black magic, have a look at the paper.
+	vec3d a_ij;
+	float p[3] = {0};
+	for (int i = 0; i < 3; i++) {
+		vec3d basis_vec = vmd_zero_vector;
+		basis_vec.a1d[i] = 1.0;
+
+		for (int j = 0; j < 3; j++) {
+			vm_vec_cross(&a_ij, &basis_vec, &edges[j]);
+			for (int k = 0; k < 3; k++) {
+				p[i] = vm_vec_dot(&a_ij, &verts[k]);
+			};
+			// TODO - actually do the check.
+		};
 	};
 	return true;
 }
