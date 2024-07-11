@@ -919,20 +919,25 @@ bool bbox_triangle_intersection(bounding_box &bbox, std::array<int, 3> &tri_idxs
 	vm_vec_cross(&tri_norm, &edges[0], &edges[1]);
 	vm_vec_normalize(&tri_norm);
 	// We can now use an AABB/plane intersection algorithm to check.
-	float e = 0.0;
+	float AABB_extent = 0.0;
 	for (int i = 0; i < 3; i++) {
-		e += hlens.a1d[i] * abs(tri_norm.a1d[i]);
+		AABB_extent += hlens.a1d[i] * abs(tri_norm.a1d[i]);
 	};
 	float plane_offset = -vm_vec_dot(&tri_norm, &verts[0]);
-	float s = vm_vec_dot(&tri_norm, &center) + plane_offset;
-	if (((s - e) > 0.0) || ((s + e) < 0)) {
+	float AABB_center_dist = abs(vm_vec_dot(&tri_norm, &center) + plane_offset);
+	// if the distance along the normal to the AABB center is longer than the extent of the AABB,
+	// then the triangle and AABB don't overlap.
+	// NOTE: This is slightly modified from the original. 
+	// AABB_center_dist is now an absolute distance instead of signed,
+	// making the conditional simpler and easier to understand.
+	if ((AABB_center_dist - AABB_extent) > 0.0) {
 		return false;
 	};
 	// If we still haven't found a seperating plane, it's time for a complicated final check. 
 	// This involves figuring out all 9 seperating planes 
-	// where both an edge of the triangle *and* a basis vector are perpendicular to it.
-	//  
+	// where both an edge of the triangle *and* a basis vector define the plane
 	// Idk how to explain this black magic, have a look at the paper.
+	// Not that it does a good job at explaining the intuition behind it either
 	vec3d a_ij;
 	float p[3] = {0};
 	for (int i = 0; i < 3; i++) {
