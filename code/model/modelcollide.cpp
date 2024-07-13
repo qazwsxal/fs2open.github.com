@@ -984,7 +984,7 @@ collision_octree_intermediate bsp2octree_build_terminal_tree(bounding_box bbox, 
 			bool tri_intersects = bbox_triangle_intersection(bbox, tri_vert_idxs, bsp_tree);
 			if (tri_intersects) {
 				tmap_vert_tris.push_back(tri_vert_idxs);
-				// We do this once per triangle rather than per-leaf
+				// We track tmap_num once per triangle rather than per-leaf
 				// as we will lose the distinction of which "leaf" we're in once we're in the octree.
 				tmap_num.push_back(leaf.tmap_num);
 			};
