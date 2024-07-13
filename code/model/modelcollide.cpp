@@ -946,10 +946,17 @@ bool bbox_triangle_intersection(bounding_box &bbox, std::array<int, 3> &tri_idxs
 
 		for (int j = 0; j < 3; j++) {
 			vm_vec_cross(&a_ij, &basis_vec, &edges[j]);
+			// reuse AABB_extent from before
+			AABB_extent = 0.0;
 			for (int k = 0; k < 3; k++) {
 				p[i] = vm_vec_dot(&a_ij, &verts[k]);
+				AABB_extent += hlens.a1d[i] * abs(a_ij.a1d[i]);
 			};
-			// TODO - actually do the check.
+			float p_max = MAX(p[0], p[2]);
+			float p_min = MIN(p[0], p[2]);
+			if ((p_min > AABB_extent) || (p_max < -AABB_extent)) {
+				return false;
+			};
 		};
 	};
 	return true;
