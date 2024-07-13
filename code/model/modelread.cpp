@@ -3511,8 +3511,7 @@ int model_load(const  char* filename, int n_subsystems, model_subsystem* subsyst
 	for (i = 0; i < pm->n_models; ++i) {
 		bsp_collision_tree bsp_tree;
 		model_collide_parse_bsp(&bsp_tree, pm->submodel[i].bsp_data, pm->version);
-		collision_octree octree;
-		bsp2octree(&octree, &bsp_tree);
+		collision_octree octree = bsp2octree(&bsp_tree);
 	}
 
 	// Find the core_radius... the minimum of 

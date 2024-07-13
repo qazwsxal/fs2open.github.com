@@ -1016,6 +1016,20 @@ void bsp2octree_split_terminal_node(vec3d& bbox_min,
 	// TODO oh god
 }
 
+// Copied from boost. We need to hash these arrays for duplicate triangle finding.
+struct ArrayHasher {
+	std::size_t operator()(const std::array<int, 3>& a) const
+	{
+		std::size_t h = 0;
+
+		for (auto e : a) {
+			h ^= std::hash<int>{}(e) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		return h;
+	}
+};
+
+
 collision_octree_intermediate bsp2_octree_merge_children(collision_octree_intermediate* children)
 {
 	collision_octree_intermediate parent;
@@ -1025,8 +1039,8 @@ collision_octree_intermediate bsp2_octree_merge_children(collision_octree_interm
 	parent.bbox.max = children[7].bbox.max;
 
 	// By constructing a set of child triangles, we implicitly de-duplicate the triangles.
-	std::unordered_set<std::array<int, 3>> child_tris;
-	std::unordered_map<std::array<int, 3>, int> child_tmaps;
+	std::unordered_set<std::array<int, 3>, ArrayHasher> child_tris;
+	std::unordered_map<std::array<int, 3>, int, ArrayHasher> child_tmaps;
 
 	for (int i = 0; i < 8; i++) {
 		for (const auto& leaf : children[i].leaves) {
@@ -1049,6 +1063,7 @@ collision_octree_intermediate bsp2_octree_merge_children(collision_octree_interm
 	} else {
 		SCP_vector<uint32_t> child_nodes;
 		for (int i = 0; i < 8; i++) {
+			// TODO
 		};
 	};
 	return parent;
@@ -1091,7 +1106,7 @@ collision_octree_intermediate bsp2octree_recurse(bounding_box box, const bsp_col
 }
 
 
-void bsp2octree(collision_octree* octree, const bsp_collision_tree* bsp_tree)
+collision_octree bsp2octree(const bsp_collision_tree* bsp_tree)
 {
 	// Get root node of bsp_tree.
 	bsp_collision_node bsp_root_node = bsp_tree->node_list[0];
@@ -1105,10 +1120,12 @@ void bsp2octree(collision_octree* octree, const bsp_collision_tree* bsp_tree)
 	max_offset.a1d[1] = bbox_max;
 	max_offset.a1d[2] = bbox_max;
 
-
-	vm_vec_sub(&octree->bbox.min, &bsp_bbox_center, &max_offset);
-	vm_vec_add(&octree->bbox.max, &bsp_bbox_center, &max_offset);
-	bsp2octree_recurse(octree, bsp_tree, 0);
+	bounding_box bbox;
+	vm_vec_sub(&bbox.min, &bsp_bbox_center, &max_offset);
+	vm_vec_add(&bbox.max, &bsp_bbox_center, &max_offset);
+	collision_octree_intermediate inter_tree = bsp2octree_recurse(bbox, bsp_tree, 0);
+	collision_octree out;
+	return out;
 }
 
 
