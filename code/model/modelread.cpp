@@ -3509,9 +3509,10 @@ int model_load(const  char* filename, int n_subsystems, model_subsystem* subsyst
 	TRACE_SCOPE(tracing::ModelParseAllBSPTrees);
 
 	for (i = 0; i < pm->n_models; ++i) {
-		bsp_collision_tree bsp_tree;
-		model_collide_parse_bsp(&bsp_tree, pm->submodel[i].bsp_data, pm->version);
-		collision_octree octree = bsp2octree(&bsp_tree);
+		pm->submodel[i].collision_tree_index = model_create_bsp_collision_tree();
+		bsp_collision_tree* bsp_tree = model_get_bsp_collision_tree(pm->submodel[i].collision_tree_index);
+		model_collide_parse_bsp(tree, pm->submodel[i].bsp_data, pm->version);
+		collision_octree octree = bsp2octree(bsp_tree);
 	}
 
 	// Find the core_radius... the minimum of 
