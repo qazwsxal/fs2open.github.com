@@ -849,27 +849,49 @@ int bsp2octree_get_deepest_bspnode(bounding_box& bbox, const bsp_collision_tree*
 	int back_idx = bsp_tree->node_list[node_idx].back;
 	bool back_intersect =
 		bboxes_intersect(bbox.min, bbox.max, bsp_tree->node_list[back_idx].min, bsp_tree->node_list[back_idx].max);
-	// Both children intersect, therefore node_idx is the deepest unique node.
-	if (front_intersect && back_intersect) {
-		return node_idx;
-	}
+
 	// If neither intersect, then our octree box is empty.
 	if (!front_intersect && !back_intersect) {
 		return -1;
 	}
-	// If either intersects, but the other doesn't, check them independently.
+
+	// Both children intersect, either node_idx is the deepest unique node, or the children
+	if (front_intersect && back_intersect) {
+		// This gets a bit tricky here as we have to consider the case 
+		// where our bbox is **inside** both front and back nodes.
+		// If this happens, we can easily get stuck in an infinite loop
+		// recursively splitting our octree to no success.
+		bool is_inside_front = true;
+		bool is_inside_back = true;
+		for (int i = 0; i < 3; i++) {
+			is_inside_front = is_inside_front && (bbox.min.a1d[i] > bsp_tree->node_list[front_idx].min.a1d[i]);
+			is_inside_front = is_inside_front && (bbox.max.a1d[i] < bsp_tree->node_list[front_idx].max.a1d[i]);
+			is_inside_back = is_inside_back && (bbox.min.a1d[i] > bsp_tree->node_list[back_idx].min.a1d[i]);
+			is_inside_back = is_inside_back && (bbox.max.a1d[i] < bsp_tree->node_list[back_idx].max.a1d[i]);
+		}
+		if (is_inside_front && is_inside_back) {
+			// This is a horrible case.
+			// I don't think we can handle it without more octree information.
+			return -2;
+		} else {
+			return node_idx;
+		};
+
+		return node_idx;
+	}
+	// if only one intersects:
 	if (front_intersect) {
-		return bsp2octree_get_deepest_bspnode(bbox, bsp_tree, front_idx);
-	}
+		return front_idx;
+	};
 	if (back_intersect) {
-		return bsp2octree_get_deepest_bspnode(bbox, bsp_tree, back_idx);
-	}
+		return back_idx;
+	};
 }
 
 
 bool bbox_triangle_intersection(bounding_box &bbox, std::array<int, 3> &tri_idxs, const bsp_collision_tree* bsp_tree) {
 	// From "Fast 3D Triangle-Box Overlap Testing" - Akenine-Moller 2001
-	// The same algorithm is predent in Real-Time Rendering 4ed. p974: 22.12 Triangle/Box intersection.
+	// The same algorithm is present in Real-Time Rendering 4ed. p974: 22.12 Triangle/Box intersection.
 	// This is based on a series of seperating-axis tests. 
 	// As soon as an axis is found where the two objects are seperate, we know they don't overlap
 	// Akenine-Moller considers an AABB defined by a center and a vector of half-lengths 
@@ -1076,12 +1098,16 @@ collision_octree_intermediate bsp2octree_recurse(bounding_box box, const bsp_col
 	// the original node_idx isn't strictly needed here, 
 	// but it speeds up bsp2octree_get_deepest_bspnode 
 	// as we don't have to traverse down the entire tree each time.
-	node_idx = bsp2octree_get_deepest_bspnode(box, bsp_tree, node_idx);
-	if (node_idx == -1) {
+	int new_node_idx = bsp2octree_get_deepest_bspnode(box, bsp_tree, node_idx);
+	if (new_node_idx == -1) {
 		// No bsp_nodes intersect with our bbox, so this node is empty.
 		collision_octree_intermediate empty_octree = {{0}, {}, box};
 		return empty_octree;
 	};
+	if (new_node_idx == -2) {
+		// We're overlapping with both child nodes, 
+	};
+	node_idx = new_node_idx;
 	// Determine if new node_idx is a leaf node, if so, return the leaf.
 	if (bsp_tree->node_list[node_idx].leaf >= 0) {
 		int leaf_idx = bsp_tree->node_list[node_idx].leaf;
@@ -1097,8 +1123,8 @@ collision_octree_intermediate bsp2octree_recurse(bounding_box box, const bsp_col
 		// to see if we use the min/mid or mid/max value (respectively) for that axis
 		bounding_box child_bbox = {};
 		for (int j = 0; j < 3; j++) {
-			child_bbox.min.a1d[j] == (i & (1 << j)) ? box.min.a1d[j] : box_mid.a1d[j];
-			child_bbox.max.a1d[j] == (i & (1 << j)) ? box_mid.a1d[j] : box.max.a1d[j];
+			child_bbox.min.a1d[j] = (i & (1 << j)) ? box_mid.a1d[j] : box.min.a1d[j];
+			child_bbox.max.a1d[j] = (i & (1 << j)) ? box.max.a1d[j] : box_mid.a1d[j];
 		}
 		child_octrees[i] = bsp2octree_recurse(child_bbox, bsp_tree, node_idx);
 	}
