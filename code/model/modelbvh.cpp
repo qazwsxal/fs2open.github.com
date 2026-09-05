@@ -103,18 +103,26 @@ struct BinBuildNode {
 	int left = -1, right = -1; // indices into the bin_nodes array; -1 == leaf
 };
 
-// Floor for the SAH build's forced leaf stop, raised from the original 2 so that leaves are usually
-// already close to a clean SIMD-width batch before the padding pass in bvh_build() below rounds
-// them the rest of the way up. This is a floor, not a cap: the SAH cost comparison in build_range()
-// can still leave a larger leaf un-split when no candidate split beats leaf_cost, so there remains
-// no true hard maximum triangle count per leaf.
+// Floor for the SAH build's forced leaf stop. This is a floor, not a cap: the SAH cost comparison in
+// build_range() can still leave a larger leaf un-split when no candidate split beats leaf_cost, so
+// there remains no true hard maximum triangle count per leaf -- measured on the real 219-POF corpus,
+// 99%+ of real (pre-padding) leaves land at or below this floor regardless of its exact value, with
+// a long thin tail of much larger un-split leaves (SAH genuinely deciding not to split a tight
+// cluster of nearby triangles, or an elongated/ring structure no single Cartesian axis separates
+// well -- see COLLISION_BVH_NOTES.md for real examples).
+//
+// Raised from 4 to 8 (2026-09-05): measured a consistent ~4-5% real-content speedup on full-object
+// sphereline queries (9 trials bracketing both values to rule out drift) -- fewer, larger leaves
+// means fewer total nodes and less per-node traversal overhead, which outweighs the extra scalar
+// candidate-triangle work inside each bigger leaf. Contrast with BVH_N=8 (see that constant's own
+// doc comment in modelbvh.h), which measured as a clear loss -- there is no general rule that larger
+// is better here, each axis needs its own real measurement.
 //
 // Deliberately NOT tied to BVH_N or SIMD_WIDTH -- this floor controls the SAH tree's *shape* (how
 // many triangles get grouped per leaf, hence traversal/leaf-visitation order), while SIMD_WIDTH
 // controls the *batch width* the leaf-intersection SIMD loop reads at once, and BVH_N controls node
-// branching (see both constants' own doc comments in modelbvh.h). Currently all three happen to be
-// 4, but that's a tuning coincidence, not a coupling -- vary them independently, don't conflate.
-constexpr int LEAF_THRESHOLD = 4;
+// branching (see both constants' own doc comments in modelbvh.h) -- vary them independently.
+constexpr int LEAF_THRESHOLD = 8;
 constexpr int NUM_BINS = 16;
 
 // Recursively builds a binary SAH tree over indices[start, start+count), partitioning `indices`
