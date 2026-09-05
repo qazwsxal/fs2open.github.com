@@ -204,11 +204,11 @@ TEST(BvhBuildTests, SingleTriangle_ProducesOneLeaf)
 	input.push_back(make_tri(V(0, 0, 0), V(1, 0, 0), V(0, 1, 0), 0, 0));
 
 	bvh_tree tree = bvh_build(input);
-	// bvh_build() pads every leaf's triangle range up to a multiple of BVH_N (see
+	// bvh_build() pads every leaf's triangle range up to a multiple of SIMD_WIDTH (see
 	// pad_leaves_to_simd_width() in modelbvh.cpp) so a leaf-batched SIMD intersection pass always
-	// gets clean BVH_N-wide chunks; a single real triangle still occupies one full leaf, now with
-	// BVH_N-1 degenerate padding copies appended.
-	ASSERT_EQ(tree.triangle_count(), static_cast<size_t>(BVH_N));
+	// gets clean SIMD_WIDTH-wide chunks; a single real triangle still occupies one full leaf, now with
+	// SIMD_WIDTH-1 degenerate padding copies appended.
+	ASSERT_EQ(tree.triangle_count(), static_cast<size_t>(SIMD_WIDTH));
 	ASSERT_FALSE(tree.nodes.empty());
 
 	const bvh_node& root = tree.nodes[tree.root];
@@ -217,13 +217,13 @@ TEST(BvhBuildTests, SingleTriangle_ProducesOneLeaf)
 		if (root.child[i] < 0)
 			continue;
 		populated++;
-		EXPECT_EQ(root.count[i], BVH_N);
+		EXPECT_EQ(root.count[i], SIMD_WIDTH);
 		EXPECT_EQ(root.child[i], 0);
 	}
 	EXPECT_EQ(populated, 1);
 
 	EXPECT_EQ(tree.original_index[0], 0);
-	for (int i = 1; i < BVH_N; ++i) {
+	for (int i = 1; i < SIMD_WIDTH; ++i) {
 		// Padding triangles are degenerate (zero-area) copies of the leaf's last real triangle's
 		// vertex, but tmap_num is an explicit -1 sentinel (not copied from the source triangle) --
 		// see pad_leaves_to_simd_width()'s append_degenerate().
@@ -241,9 +241,9 @@ TEST(BvhBuildTests, TwoTriangles_BothPresent)
 	input.push_back(make_tri(V(10, 0, 0), V(11, 0, 0), V(10, 1, 0), 0, 1));
 
 	bvh_tree tree = bvh_build(input);
-	// Both triangles fall within one leaf (count 2 <= LEAF_THRESHOLD == BVH_N, so no split is even
-	// attempted); padded up to BVH_N.
-	ASSERT_EQ(tree.triangle_count(), static_cast<size_t>(BVH_N));
+	// Both triangles fall within one leaf (count 2 <= LEAF_THRESHOLD, so no split is even attempted);
+	// padded up to SIMD_WIDTH.
+	ASSERT_EQ(tree.triangle_count(), static_cast<size_t>(SIMD_WIDTH));
 
 	std::set<int> seen(tree.original_index.begin(), tree.original_index.end());
 	EXPECT_EQ(seen, (std::set<int>{0, 1}));
@@ -255,9 +255,9 @@ TEST(BvhBuildTests, Cube_AllTrianglesPreservedAndContained)
 	bvh_tree tree = bvh_build(input);
 
 	// Padding only ever grows the array (never drops real triangles), and every leaf's range is a
-	// multiple of BVH_N.
+	// multiple of SIMD_WIDTH.
 	ASSERT_GE(tree.triangle_count(), 12u);
-	EXPECT_EQ(tree.triangle_count() % BVH_N, 0u);
+	EXPECT_EQ(tree.triangle_count() % SIMD_WIDTH, 0u);
 
 	std::set<int> visited;
 	check_containment(tree, tree.root, visited);
@@ -268,18 +268,18 @@ TEST(BvhBuildTests, Cube_AllTrianglesPreservedAndContained)
 	EXPECT_EQ(visited, expected);
 }
 
-TEST(BvhBuildTests, AllLeafRangesArePaddedToMultipleOfBVH_N)
+TEST(BvhBuildTests, AllLeafRangesArePaddedToMultipleOfSimdWidth)
 {
 	// Covers modelbvh.cpp's pad_leaves_to_simd_width(): every leaf slot's count must come out a
-	// clean multiple of BVH_N, and any padding triangles appended beyond the real content of that
-	// leaf must be degenerate (zero-area) so they can never win a ray/SIMD intersection test.
+	// clean multiple of SIMD_WIDTH, and any padding triangles appended beyond the real content of
+	// that leaf must be degenerate (zero-area) so they can never win a ray/SIMD intersection test.
 	std::function<void(const bvh_tree&, int)> check = [&](const bvh_tree& tree, int node_idx) {
 		const bvh_node& node = tree.nodes[node_idx];
 		for (int i = 0; i < BVH_N; ++i) {
 			if (node.child[i] < 0)
 				continue;
 			if (node.count[i] > 0) {
-				EXPECT_EQ(node.count[i] % BVH_N, 0) << "leaf at node " << node_idx << " slot " << i;
+				EXPECT_EQ(node.count[i] % SIMD_WIDTH, 0) << "leaf at node " << node_idx << " slot " << i;
 			} else {
 				check(tree, node.child[i]);
 			}
@@ -292,13 +292,13 @@ TEST(BvhBuildTests, AllLeafRangesArePaddedToMultipleOfBVH_N)
 		check(tree, tree.root);
 	}
 
-	// A lone, oddly-sized input (not a multiple of BVH_N) still ends up padded.
+	// A lone, oddly-sized input (not a multiple of SIMD_WIDTH) still ends up padded.
 	SCP_vector<bvh_triangle> odd;
 	for (int i = 0; i < 5; ++i)
 		odd.push_back(make_tri(V(float(i) * 10.0f, 0, 0), V(float(i) * 10.0f + 1, 0, 0), V(float(i) * 10.0f, 1, 0), 0, i));
 	bvh_tree odd_tree = bvh_build(odd);
 	check(odd_tree, odd_tree.root);
-	EXPECT_EQ(odd_tree.triangle_count() % BVH_N, 0u);
+	EXPECT_EQ(odd_tree.triangle_count() % SIMD_WIDTH, 0u);
 }
 
 TEST(BvhBuildTests, Cube_RootBoundsMatchCube)
@@ -497,14 +497,14 @@ TEST(BvhVisitTrianglesTests, TMaxBoundsTheRay)
 	EXPECT_EQ(visit_all_original_indices(tree, origin, dir, FLT_MAX), (std::set<int>{7}));
 }
 
-TEST(BvhVisitTrianglesTests, LeafRangesVisitedAreAlwaysMultipleOfBVH_N)
+TEST(BvhVisitTrianglesTests, LeafRangesVisitedAreAlwaysMultipleOfSimdWidth)
 {
 	SCP_vector<bvh_triangle> input = make_cube();
 	bvh_tree tree = bvh_build(input);
 
 	int visits = 0;
 	bvh_visit_triangles(tree, V(0, 0, -10), V(0, 0, 1), FLT_MAX, 0.0f, [&](int32_t /*start*/, int32_t count, float & /*t_max*/) {
-		EXPECT_EQ(count % BVH_N, 0);
+		EXPECT_EQ(count % SIMD_WIDTH, 0);
 		visits++;
 	});
 	EXPECT_GT(visits, 0);
@@ -551,14 +551,14 @@ TEST(BvhVisitTrianglesTests, ManyRandomTriangles_TrueHitsAlwaysVisited)
 // ray_triangle_leaf_simd() correctness: cross-checked per-leaf against the same scalar
 // Moller-Trumbore reference (brute_force_ray_intersect) already used as the oracle above, per the
 // stage-4 plan's step-5 gate ("do not proceed to live wiring until it's solid"). Covers a leaf
-// smaller than BVH_N (all-padding-but-one lanes), an exact-BVH_N leaf, and a clean miss.
+// smaller than SIMD_WIDTH (all-padding-but-one lanes), an exact-SIMD_WIDTH leaf, and a clean miss.
 
 TEST(BvhLeafSimdTests, SingleTriangleLeaf_MatchesScalarReference)
 {
 	SCP_vector<bvh_triangle> input;
 	input.push_back(make_tri(V(-1, -1, 0), V(1, -1, 0), V(0, 1, 0), 0, 0));
 	bvh_tree tree = bvh_build(input);
-	ASSERT_EQ(tree.triangle_count(), static_cast<size_t>(BVH_N)); // 1 real + BVH_N-1 padding
+	ASSERT_EQ(tree.triangle_count(), static_cast<size_t>(SIMD_WIDTH)); // 1 real + SIMD_WIDTH-1 padding
 
 	vec3d origin = V(0, -0.5f, -10);
 	vec3d dir = V(0, 0, 1);

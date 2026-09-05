@@ -13,17 +13,28 @@
 // A later stage is responsible for extracting bvh_triangle arrays from real submodel geometry
 // and wiring bvh_build()/traversal into the collision pipeline.
 
-// Compile-time branching factor. Not a template parameter (yet) -- kept as a single constant so
-// traversal/build code can be written generically over plain float[BVH_N] arrays and left to the
-// autovectorizer. SSE2 (4-wide float) is the project's safe baseline (CI forces
-// -DFORCED_SIMD_INSTRUCTIONS=SSE2 on Windows), hence N=4.
-//
-// Do not bump this to 8 for AVX without also retuning LEAF_THRESHOLD (modelbvh.cpp) in the same
-// change: measured on real content, N=8 with LEAF_THRESHOLD left at 4 is a net loss (leaf padding
-// roughly doubles the total padded triangle count, which outweighs the wider SIMD registers), and
-// with LEAF_THRESHOLD raised to match it reshapes the tree and shifts leaf-visitation order enough
-// to matter for the traversal-order-sensitive triangle-edge tie-break (see BARY_EPS below).
+// Compile-time branching factor: how many children one bvh_node holds, and (via emit_node()'s
+// greedy collapse in modelbvh.cpp) how many binary-tree levels get merged into one node. This is a
+// memory-locality knob, not a compute-vectorization one -- see bvh_node's own doc comment below for
+// why: the per-node box test is an ordinary scalar loop over these BVH_N slots, not a vectorized
+// compare across them. SIMD_WIDTH (below) is the separate constant for that.
 constexpr int BVH_N = 4;
+
+// Compile-time SIMD batch width: how many triangles ray_triangle_leaf_simd() (below) processes per
+// vectorized pass, and what bvh_build() pads every leaf's triangle range up to a multiple of so that
+// pass never has a ragged remainder. Kept as a plain constant, not a template parameter, so the
+// arithmetic stays plain float[SIMD_WIDTH] arrays left to the autovectorizer. SSE2 (4-wide float) is
+// the project's safe baseline (CI forces -DFORCED_SIMD_INSTRUCTIONS=SSE2 on Windows), hence 4.
+//
+// Independent of BVH_N -- currently the same value by coincidence, not by any coupling in the code
+// (same relationship as LEAF_THRESHOLD's independence from BVH_N, see that constant's own comment).
+// Do not bump this to 8 for AVX without separately retuning LEAF_THRESHOLD (modelbvh.cpp) if leaf
+// *shape* also needs to change: measured on real content, moving leaf-intersection batching to 8
+// wide while LEAF_THRESHOLD stayed at 4 was a net loss (leaf padding roughly doubles the total
+// padded triangle count, which outweighs the wider SIMD registers), and raising LEAF_THRESHOLD to
+// match reshapes the tree and shifts leaf-visitation order enough to matter for the
+// traversal-order-sensitive triangle-edge tie-break (see BARY_EPS below).
+constexpr int SIMD_WIDTH = 4;
 
 // Minimal UV pair, kept local to this module rather than reusing model.h's uv_pair -- this header
 // must stay independent of model.h (see file comment above).
@@ -51,7 +62,8 @@ struct bvh_triangle {
 // a vectorized compare across them -- a genuine 4-wide rewrite of that test was tried and measured
 // slower on real content (SIMD across sibling children turned out not to pay off here), so it stays
 // scalar; don't re-attempt this blind. SoA still earns its keep elsewhere: ray_triangle_leaf_simd()
-// (below) does genuinely vectorize across BVH_N triangles, just in a different array than this one.
+// (below) does genuinely vectorize, across SIMD_WIDTH triangles at a time -- a different array, and
+// a different constant, than this struct's own BVH_N.
 //
 // Per slot i:
 //   count[i] > 0  -> leaf: child[i] is the start index into bvh_tree::triangles, count[i] triangles.
@@ -83,7 +95,7 @@ struct bvh_tri_indices {
 // (vec3d / bvh_tri_indices), not split into per-component arrays: a vertex's x/y/z (or a
 // triangle's three indices) are never read independently of each other, so splitting them into
 // separate arrays would only turn one small contiguous read into several unrelated ones. The
-// SIMD leaf test still assembles its own per-component float[BVH_N] arrays from these -- that's a
+// SIMD leaf test still assembles its own per-component float[SIMD_WIDTH] arrays from these -- that's a
 // destination-side shape for vectorized math, not a reason to store the source that way, since
 // gathering by index requires a per-lane scalar read either way (no HW gather on this project's
 // SIMD baseline). The pool is ordered by first reference when walking triangles in leaf order (see
@@ -133,16 +145,16 @@ struct bvh_tree {
 bvh_tree bvh_build(SCP_vector<bvh_triangle> triangles);
 
 // Batched, SIMD-friendly nearest-hit ray-vs-triangle test over one leaf range [start, start+count)
-// (as handed to a bvh_visit_triangles() visitor -- count is always a multiple of BVH_N). Processes
-// BVH_N triangles per iteration reading directly from the tree's SoA vertex arrays (no transpose:
-// that's the point of storing them this way), computing every lane's Moller-Trumbore result
-// unconditionally (no early return per lane, matching a standard Moller-Trumbore test's math but
-// avoiding per-lane branches) so the loop stays a fixed-trip-count, branch-free-per-lane shape for
-// the autovectorizer -- same "plain
-// float[BVH_N] arrays, SSE2 baseline, no hand intrinsics" strategy bvh_node's own child-AABB test
-// already uses. Degenerate padding triangles (see bvh_build()) always fail the |det| check and are
-// never returned as a hit. The final "pick nearest valid lane" reduction is ordinary scalar control
-// flow -- only the per-lane geometry math is written to vectorize.
+// (as handed to a bvh_visit_triangles() visitor -- count is always a multiple of SIMD_WIDTH).
+// Processes SIMD_WIDTH triangles per iteration reading directly from the tree's SoA vertex arrays
+// (no transpose: that's the point of storing them this way), computing every lane's Moller-Trumbore
+// result unconditionally (no early return per lane, matching a standard Moller-Trumbore test's math
+// but avoiding per-lane branches) so the loop stays a fixed-trip-count, branch-free-per-lane shape
+// for the autovectorizer -- plain float[SIMD_WIDTH] arrays, SSE2 baseline, no hand intrinsics. This
+// is the function that actually vectorizes in this module; bvh_node's own child-AABB test does not
+// (see that struct's doc comment). Degenerate padding triangles (see bvh_build()) always fail the
+// |det| check and are never returned as a hit. The final "pick nearest valid lane" reduction is
+// ordinary scalar control flow -- only the per-lane geometry math is written to vectorize.
 // best_t bounds the search (e.g. an already-found candidate's t, or FLT_MAX); returns true and
 // fills out_t/out_triangle_index (an index into the tree's parallel arrays) only for a strictly
 // closer hit.
@@ -193,7 +205,7 @@ inline bool ray_aabb_visit(const vec3d& origin, const vec3d& inv_dir, const floa
 // [origin, origin + dir*t_max] intersects, where [start, start+count) indexes the tree's parallel
 // triangle arrays (see bvh_tree::triangle_at()). A whole leaf range is handed to the visitor at
 // once (not one triangle at a time) so a caller can batch-test the leaf's triangles with SIMD (see
-// ray_triangle_leaf_simd() below). Every leaf's count is a multiple of BVH_N (see bvh_build()'s
+// ray_triangle_leaf_simd() below). Every leaf's count is a multiple of SIMD_WIDTH (see bvh_build()'s
 // padding step), with any padding triangles guaranteed to be degenerate (zero-area) and never a
 // valid hit. Pass t_max = FLT_MAX for an unbounded ray (MC_CHECK_RAY-equivalent).
 // `radius` inflates every AABB test by that amount on every axis before testing -- pass

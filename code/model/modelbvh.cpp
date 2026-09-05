@@ -109,10 +109,11 @@ struct BinBuildNode {
 // can still leave a larger leaf un-split when no candidate split beats leaf_cost, so there remains
 // no true hard maximum triangle count per leaf.
 //
-// Deliberately NOT tied to BVH_N -- this floor controls the SAH tree's *shape* (how many triangles
-// get grouped per leaf, hence traversal/leaf-visitation order), while BVH_N controls the *batch
-// width* the leaf-intersection SIMD loop reads at once (see BVH_N's own doc comment in modelbvh.h).
-// Currently the same value (4) but the two should be varied independently, not conflated.
+// Deliberately NOT tied to BVH_N or SIMD_WIDTH -- this floor controls the SAH tree's *shape* (how
+// many triangles get grouped per leaf, hence traversal/leaf-visitation order), while SIMD_WIDTH
+// controls the *batch width* the leaf-intersection SIMD loop reads at once, and BVH_N controls node
+// branching (see both constants' own doc comments in modelbvh.h). Currently all three happen to be
+// 4, but that's a tuning coincidence, not a coupling -- vary them independently, don't conflate.
 constexpr int LEAF_THRESHOLD = 4;
 constexpr int NUM_BINS = 16;
 
@@ -316,8 +317,8 @@ int emit_node(const SCP_vector<BinBuildNode>& bin_nodes, int bin_node_index, SCP
 	int idx = static_cast<int>(out_nodes.size());
 	out_nodes.push_back(bvh_node{});
 
-	// Pad remaining slots with the sentinel (impossible box) so unused slots fail the SIMD test
-	// for free and are never mistaken for a real child.
+	// Pad remaining slots with the sentinel (impossible box) so unused slots fail the (scalar) slab
+	// test for free and are never mistaken for a real child.
 	for (int i = 0; i < BVH_N; ++i) {
 		out_nodes[idx].minx[i] = out_nodes[idx].miny[i] = out_nodes[idx].minz[i] = FLT_MAX;
 		out_nodes[idx].maxx[i] = out_nodes[idx].maxy[i] = out_nodes[idx].maxz[i] = -FLT_MAX;
@@ -350,9 +351,9 @@ int emit_node(const SCP_vector<BinBuildNode>& bin_nodes, int bin_node_index, SCP
 	return idx;
 }
 
-// Rounds every leaf's triangle range up to a multiple of BVH_N by appending degenerate
+// Rounds every leaf's triangle range up to a multiple of SIMD_WIDTH by appending degenerate
 // (zero-area, v1==v2==v0) copies of the leaf's last triangle, so a SIMD leaf-intersection pass can
-// always process clean BVH_N-wide chunks with no ragged remainder. Degenerate triangles have
+// always process clean SIMD_WIDTH-wide chunks with no ragged remainder. Degenerate triangles have
 // det==0 in the Moller-Trumbore test (v1-v0 and v2-v0 are both zero vectors), so they can never
 // register a hit -- mirrors the "impossible box" padding already used for unused bvh_node child
 // slots in emit_node() above. Rewrites each leaf slot's child[]/count[] in place to point at the
@@ -413,7 +414,7 @@ void pad_leaves_to_simd_width(bvh_tree& tree)
 			for (int t = start; t < start + count; ++t)
 				append_real(static_cast<size_t>(t));
 
-			int padded_count = ((count + BVH_N - 1) / BVH_N) * BVH_N;
+			int padded_count = ((count + SIMD_WIDTH - 1) / SIMD_WIDTH) * SIMD_WIDTH;
 			for (int p = count; p < padded_count; ++p)
 				append_degenerate(static_cast<size_t>(start + count - 1));
 
@@ -507,17 +508,17 @@ bool ray_triangle_leaf_simd(const bvh_tree& tree, int32_t start, int32_t count, 
 
 	bool found = false;
 
-	for (int32_t chunk = start; chunk < start + count; chunk += BVH_N) {
+	for (int32_t chunk = start; chunk < start + count; chunk += SIMD_WIDTH) {
 		// Vertex components are resolved with a per-lane scalar index load from the shared pool
 		// first (there's no hardware gather on this project's SIMD baseline -- confirmed AVX2-only,
 		// and weak even there before Skylake -- so a per-lane scalar load is the right tool, not a
-		// missed-vectorization gap). Separate fixed-BVH_N-length arrays and per-stage loops below so
+		// missed-vectorization gap). Separate fixed-SIMD_WIDTH-length arrays and per-stage loops below so
 		// the autovectorizer has the best chance of turning the arithmetic into SIMD, every lane
 		// computed unconditionally with no data-dependent control flow across lanes.
-		float v0x[BVH_N], v0y[BVH_N], v0z[BVH_N];
-		float v1x[BVH_N], v1y[BVH_N], v1z[BVH_N];
-		float v2x[BVH_N], v2y[BVH_N], v2z[BVH_N];
-		for (int i = 0; i < BVH_N; ++i) {
+		float v0x[SIMD_WIDTH], v0y[SIMD_WIDTH], v0z[SIMD_WIDTH];
+		float v1x[SIMD_WIDTH], v1y[SIMD_WIDTH], v1z[SIMD_WIDTH];
+		float v2x[SIMD_WIDTH], v2y[SIMD_WIDTH], v2z[SIMD_WIDTH];
+		for (int i = 0; i < SIMD_WIDTH; ++i) {
 			int32_t idx = chunk + i;
 			const bvh_tri_indices& tri = tree.tris[idx];
 			const vec3d& v0 = tree.verts[tri.i0];
@@ -534,9 +535,9 @@ bool ray_triangle_leaf_simd(const bvh_tree& tree, int32_t start, int32_t count, 
 			v2z[i] = v2.xyz.z;
 		}
 
-		float e1x[BVH_N], e1y[BVH_N], e1z[BVH_N];
-		float e2x[BVH_N], e2y[BVH_N], e2z[BVH_N];
-		for (int i = 0; i < BVH_N; ++i) {
+		float e1x[SIMD_WIDTH], e1y[SIMD_WIDTH], e1z[SIMD_WIDTH];
+		float e2x[SIMD_WIDTH], e2y[SIMD_WIDTH], e2z[SIMD_WIDTH];
+		for (int i = 0; i < SIMD_WIDTH; ++i) {
 			e1x[i] = v1x[i] - v0x[i];
 			e1y[i] = v1y[i] - v0y[i];
 			e1z[i] = v1z[i] - v0z[i];
@@ -545,41 +546,41 @@ bool ray_triangle_leaf_simd(const bvh_tree& tree, int32_t start, int32_t count, 
 			e2z[i] = v2z[i] - v0z[i];
 		}
 
-		float pvecx[BVH_N], pvecy[BVH_N], pvecz[BVH_N];
-		for (int i = 0; i < BVH_N; ++i) {
+		float pvecx[SIMD_WIDTH], pvecy[SIMD_WIDTH], pvecz[SIMD_WIDTH];
+		for (int i = 0; i < SIMD_WIDTH; ++i) {
 			pvecx[i] = dir.xyz.y * e2z[i] - dir.xyz.z * e2y[i];
 			pvecy[i] = dir.xyz.z * e2x[i] - dir.xyz.x * e2z[i];
 			pvecz[i] = dir.xyz.x * e2y[i] - dir.xyz.y * e2x[i];
 		}
 
-		float det[BVH_N];
-		for (int i = 0; i < BVH_N; ++i)
+		float det[SIMD_WIDTH];
+		for (int i = 0; i < SIMD_WIDTH; ++i)
 			det[i] = e1x[i] * pvecx[i] + e1y[i] * pvecy[i] + e1z[i] * pvecz[i];
 
-		float inv_det[BVH_N];
-		for (int i = 0; i < BVH_N; ++i)
+		float inv_det[SIMD_WIDTH];
+		for (int i = 0; i < SIMD_WIDTH; ++i)
 			inv_det[i] = (std::fabs(det[i]) < EPS) ? 0.0f : 1.0f / det[i];
 
-		float tvecx[BVH_N], tvecy[BVH_N], tvecz[BVH_N];
-		for (int i = 0; i < BVH_N; ++i) {
+		float tvecx[SIMD_WIDTH], tvecy[SIMD_WIDTH], tvecz[SIMD_WIDTH];
+		for (int i = 0; i < SIMD_WIDTH; ++i) {
 			tvecx[i] = origin.xyz.x - v0x[i];
 			tvecy[i] = origin.xyz.y - v0y[i];
 			tvecz[i] = origin.xyz.z - v0z[i];
 		}
 
-		float u[BVH_N];
-		for (int i = 0; i < BVH_N; ++i)
+		float u[SIMD_WIDTH];
+		for (int i = 0; i < SIMD_WIDTH; ++i)
 			u[i] = (tvecx[i] * pvecx[i] + tvecy[i] * pvecy[i] + tvecz[i] * pvecz[i]) * inv_det[i];
 
-		float qvecx[BVH_N], qvecy[BVH_N], qvecz[BVH_N];
-		for (int i = 0; i < BVH_N; ++i) {
+		float qvecx[SIMD_WIDTH], qvecy[SIMD_WIDTH], qvecz[SIMD_WIDTH];
+		for (int i = 0; i < SIMD_WIDTH; ++i) {
 			qvecx[i] = tvecy[i] * e1z[i] - tvecz[i] * e1y[i];
 			qvecy[i] = tvecz[i] * e1x[i] - tvecx[i] * e1z[i];
 			qvecz[i] = tvecx[i] * e1y[i] - tvecy[i] * e1x[i];
 		}
 
-		float v[BVH_N], t[BVH_N];
-		for (int i = 0; i < BVH_N; ++i) {
+		float v[SIMD_WIDTH], t[SIMD_WIDTH];
+		for (int i = 0; i < SIMD_WIDTH; ++i) {
 			v[i] = (dir.xyz.x * qvecx[i] + dir.xyz.y * qvecy[i] + dir.xyz.z * qvecz[i]) * inv_det[i];
 			t[i] = (e2x[i] * qvecx[i] + e2y[i] * qvecy[i] + e2z[i] * qvecz[i]) * inv_det[i];
 		}
@@ -593,13 +594,13 @@ bool ray_triangle_leaf_simd(const bvh_tree& tree, int32_t start, int32_t count, 
 		// this function's own reported candidate -- would have accepted it. A zero-tolerance test
 		// here would silently drop real hits at those boundaries.
 		constexpr float BARY_EPS = 1e-4f;
-		bool valid[BVH_N];
-		for (int i = 0; i < BVH_N; ++i) {
+		bool valid[SIMD_WIDTH];
+		for (int i = 0; i < SIMD_WIDTH; ++i) {
 			valid[i] = std::fabs(det[i]) >= EPS && u[i] >= -BARY_EPS && u[i] <= 1.0f + BARY_EPS && v[i] >= -BARY_EPS &&
 				(u[i] + v[i]) <= 1.0f + BARY_EPS && t[i] >= 0.0f && t[i] < best_t;
 		}
 
-		for (int i = 0; i < BVH_N; ++i) {
+		for (int i = 0; i < SIMD_WIDTH; ++i) {
 			if (valid[i] && t[i] < best_t) {
 				best_t = t[i];
 				out_t = t[i];
