@@ -111,18 +111,18 @@ struct BinBuildNode {
 // cluster of nearby triangles, or an elongated/ring structure no single Cartesian axis separates
 // well -- see COLLISION_BVH_NOTES.md for real examples).
 //
-// Raised from 4 to 8, then 8 to 16 (2026-09-05): each step measured a further real-content speedup
-// on full-object sphereline queries -- fewer, larger leaves means fewer total nodes and less
-// per-node traversal overhead, which outweighs the extra scalar candidate-triangle work inside each
-// bigger leaf. 4->8 was a clean, low-noise ~4-5% win (9 trials bracketing both values). 8->16 showed
-// real thermal-drift noise in the raw medians (a long benchmarking session can heat-soak the host
-// enough to shift later trials), so min-of-trials -- the statistic least distorted by that -- is the
-// more trustworthy signal there: 8's min stayed tightly clustered (~16.4-16.6k ns/call) across three
-// separate measurement sessions spread through the same run, while 16's min clustered consistently
-// lower (~15.9-16.2k ns/call) whenever not itself thermally contaminated. Contrast with BVH_N=8 (see
-// that constant's own doc comment in modelbvh.h), which measured as a clear loss regardless of
-// statistic -- there is no general rule that larger is better here, each axis needs its own real
-// measurement, and a noisy result still needs an honest read rather than a discarded one.
+// Raised from 4 to 16 (2026-09-05), settled by a full sweep rather than incremental pairwise
+// comparisons (which had shown real thermal-drift noise on a long benchmarking session): rebuilt
+// and measured 2/4/8/16/32/64 in one continuous run, 15 trials each, real 219-POF full-object
+// sphereline queries. Clean U-shape, minimum at 16, no drift within the sweep (median ns/call):
+//   2: 17762   4: 16345   8: 16049   16: 15945   32: 16371   64: 17269
+// Fewer, larger leaves means fewer total nodes and less per-node traversal overhead, which
+// outweighs the extra scalar candidate-triangle work inside each bigger leaf -- up to a point:
+// past 16 the growing per-leaf scalar cost starts winning back what shallower traversal saves,
+// hence the U shape rather than a monotonic win. Contrast with BVH_N=8 (see that constant's own
+// doc comment in modelbvh.h), which measured as a clear loss -- there is no general rule that
+// larger is better here, each axis needs its own real measurement, ideally a full sweep rather
+// than a single pairwise A/B.
 //
 // Deliberately NOT tied to BVH_N or SIMD_WIDTH -- this floor controls the SAH tree's *shape* (how
 // many triangles get grouped per leaf, hence traversal/leaf-visitation order), while SIMD_WIDTH
