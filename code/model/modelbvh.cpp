@@ -111,18 +111,24 @@ struct BinBuildNode {
 // cluster of nearby triangles, or an elongated/ring structure no single Cartesian axis separates
 // well -- see COLLISION_BVH_NOTES.md for real examples).
 //
-// Raised from 4 to 8 (2026-09-05): measured a consistent ~4-5% real-content speedup on full-object
-// sphereline queries (9 trials bracketing both values to rule out drift) -- fewer, larger leaves
-// means fewer total nodes and less per-node traversal overhead, which outweighs the extra scalar
-// candidate-triangle work inside each bigger leaf. Contrast with BVH_N=8 (see that constant's own
-// doc comment in modelbvh.h), which measured as a clear loss -- there is no general rule that larger
-// is better here, each axis needs its own real measurement.
+// Raised from 4 to 8, then 8 to 16 (2026-09-05): each step measured a further real-content speedup
+// on full-object sphereline queries -- fewer, larger leaves means fewer total nodes and less
+// per-node traversal overhead, which outweighs the extra scalar candidate-triangle work inside each
+// bigger leaf. 4->8 was a clean, low-noise ~4-5% win (9 trials bracketing both values). 8->16 showed
+// real thermal-drift noise in the raw medians (a long benchmarking session can heat-soak the host
+// enough to shift later trials), so min-of-trials -- the statistic least distorted by that -- is the
+// more trustworthy signal there: 8's min stayed tightly clustered (~16.4-16.6k ns/call) across three
+// separate measurement sessions spread through the same run, while 16's min clustered consistently
+// lower (~15.9-16.2k ns/call) whenever not itself thermally contaminated. Contrast with BVH_N=8 (see
+// that constant's own doc comment in modelbvh.h), which measured as a clear loss regardless of
+// statistic -- there is no general rule that larger is better here, each axis needs its own real
+// measurement, and a noisy result still needs an honest read rather than a discarded one.
 //
 // Deliberately NOT tied to BVH_N or SIMD_WIDTH -- this floor controls the SAH tree's *shape* (how
 // many triangles get grouped per leaf, hence traversal/leaf-visitation order), while SIMD_WIDTH
 // controls the *batch width* the leaf-intersection SIMD loop reads at once, and BVH_N controls node
 // branching (see both constants' own doc comments in modelbvh.h) -- vary them independently.
-constexpr int LEAF_THRESHOLD = 8;
+constexpr int LEAF_THRESHOLD = 16;
 constexpr int NUM_BINS = 16;
 
 // Recursively builds a binary SAH tree over indices[start, start+count), partitioning `indices`
