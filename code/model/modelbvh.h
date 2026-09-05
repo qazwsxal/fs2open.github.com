@@ -104,6 +104,16 @@ struct bvh_tri_indices {
 // Metadata that's only ever read once per accepted hit (never per SIMD lane) -- tmap_num,
 // original_index, leaf_index, UVs -- stays out of the hot arrays but is still parallel-indexed the
 // same way, for the same reason: one source of truth, no syncing.
+//
+// `normal` is the one exception to "only read once per accepted hit": the scalar sphereline/ray
+// face tests (modelcollide.cpp) need a triangle's own unit face normal on *every* triangle they
+// test, not just accepted hits (it's needed for the backface cull before a hit is even known). A
+// triangle's local-space geometry never changes between queries (only the submodel's transform,
+// applied to the query ray/sphere, not the triangle), so recomputing cross(e1,e2)+normalize --
+// including a real sqrt -- from scratch on every single query was pure repeated work; precomputed
+// once here at build time instead. Zero vector marks a degenerate (zero-area) triangle, matching
+// vm_vec_normalize_safe(..., true)'s own fallback convention -- callers check magnitude, not a
+// separate flag.
 struct bvh_tree {
 	SCP_vector<bvh_node> nodes;
 
@@ -113,6 +123,7 @@ struct bvh_tree {
 	SCP_vector<int> original_index;
 	SCP_vector<int> leaf_index;
 	SCP_vector<bvh_uv> uv0, uv1, uv2;
+	SCP_vector<vec3d> normal; // precomputed unit face normal per triangle -- see doc comment above
 
 	int root = 0;
 

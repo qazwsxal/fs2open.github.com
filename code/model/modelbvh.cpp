@@ -512,6 +512,20 @@ bvh_tree bvh_build(SCP_vector<bvh_triangle> triangles)
 
 	pad_leaves_to_simd_width(tree);
 
+	// Precompute each triangle's unit face normal (see bvh_tree::normal's own doc comment) -- run
+	// after padding, in one pass over the tree's final triangle order, so degenerate padding
+	// triangles (collapsed to zero area) get a normal entry too, same convention as everything else
+	// (zero vector, matching vm_vec_normalize_safe(..., true)'s own degenerate fallback).
+	tree.normal.reserve(tree.tris.size());
+	for (const bvh_tri_indices& tri : tree.tris) {
+		vec3d e1 = tree.verts[tri.i1] - tree.verts[tri.i0];
+		vec3d e2 = tree.verts[tri.i2] - tree.verts[tri.i0];
+		vec3d n;
+		vm_vec_cross(&n, &e1, &e2);
+		vm_vec_normalize_safe(&n, true);
+		tree.normal.push_back(n);
+	}
+
 	return tree;
 }
 

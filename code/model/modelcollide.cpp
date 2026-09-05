@@ -60,8 +60,12 @@ thread_local static bool Mc_use_toplevel_bvh_for_children = false;
 // re-testing `Mc->flags & MC_CHECK_SPHERELINE` on every single candidate triangle in
 // mc_check_bvh_triangle()'s nearest-first confirmation loop (which can revisit several triangles
 // per leaf) would be pure repeated branching on an unchanging answer.
-using TriangleFaceTestFn = void (*)(const vec3d &, const vec3d &, const vec3d &, const bvh_uv &, const bvh_uv &,
-	const bvh_uv &, bool, int);
+// The extra vec3d& is the triangle's precomputed unit face normal (bvh_tree::normal -- see its own
+// doc comment) -- both implementations used to recompute this from scratch (cross+normalize, a real
+// sqrt) on every single triangle tested; now read once at bvh_build() time instead, since a
+// triangle's local-space geometry is invariant across every query that ever tests it.
+using TriangleFaceTestFn = void (*)(const vec3d &, const vec3d &, const vec3d &, const vec3d &, const bvh_uv &,
+	const bvh_uv &, const bvh_uv &, bool, int);
 thread_local static TriangleFaceTestFn Mc_triangle_face_test_fn = nullptr;
 
 
@@ -124,21 +128,20 @@ int mc_ray_boundingbox( vec3d *min, vec3d *max, vec3d * p0, vec3d *pdir, vec3d *
 
 
 
-// Triangle-granularity face test: takes a single triangle's own 3 verts/UVs. Uses the triangle's own
-// exact plane (cross product of its two edges -- always planar for 3 points) for backface cull and
-// the ray/plane solve, and a direct barycentric containment test instead of a dominant-axis-
-// projection point-in-polygon test. `has_uv`/`ntmap` mirror the flat-poly convention used elsewhere
-// in this file -- has_uv==false for a flat (untextured) polygon.
-static void mc_check_triangle_face(const vec3d &v0, const vec3d &v1, const vec3d &v2, const bvh_uv &uv0,
-	const bvh_uv &uv1, const bvh_uv &uv2, bool has_uv, int ntmap)
+// Triangle-granularity face test: takes a single triangle's own 3 verts/UVs, plus its precomputed
+// unit face normal (bvh_tree::normal -- computed once at build time, not recomputed here; see that
+// field's own doc comment). Uses the triangle's own exact plane for backface cull and the ray/plane
+// solve, and a direct barycentric containment test instead of a dominant-axis-projection
+// point-in-polygon test. `has_uv`/`ntmap` mirror the flat-poly convention used elsewhere in this
+// file -- has_uv==false for a flat (untextured) polygon.
+static void mc_check_triangle_face(const vec3d &v0, const vec3d &v1, const vec3d &v2, const vec3d &normal,
+	const bvh_uv &uv0, const bvh_uv &uv1, const bvh_uv &uv2, bool has_uv, int ntmap)
 {
 	vec3d e1 = v1 - v0;
 	vec3d e2 = v2 - v0;
 
-	vec3d normal;
-	vm_vec_cross(&normal, &e1, &e2);
-	if (vm_vec_normalize_safe(&normal, true) <= 0.0f)
-		return; // degenerate (zero-area) triangle -- nothing to test against
+	if (vm_vec_mag_squared(&normal) <= 0.0f)
+		return; // degenerate (zero-area) triangle -- nothing to test against (see bvh_tree::normal)
 
 	if (!(Mc->flags & MC_COLLIDE_ALL) && vm_vec_dot(&Mc_direction, &normal) > 0.0f)
 		return;
@@ -338,16 +341,18 @@ bool mc_triangle_edges_sphereline(const vec3d &v0, const vec3d &v1, const vec3d 
 // an edge fallback against the triangle's own exact plane/edges. The edge fallback deliberately
 // checks this triangle's own 3 edges, unconditionally -- including whichever edge may be a
 // fan-triangulation diagonal rather than a true polygon boundary. The edge-hit branch does not set
-// Mc->hit_tmap_num (only the face-hit branch does).
-static void mc_check_triangle_sphereline_face(const vec3d &v0, const vec3d &v1, const vec3d &v2, const bvh_uv &uv0,
-	const bvh_uv &uv1, const bvh_uv &uv2, bool has_uv, int ntmap)
+// Mc->hit_tmap_num (only the face-hit branch does). `normal` is the triangle's precomputed unit face
+// normal (bvh_tree::normal) -- this is the dominant cost center this whole collision system spends
+// its time in (profiled at ~74% of total collision CPU), tested once per triangle per query
+// regardless of hit outcome, so it's the one place the precomputed-normal change (see that field's
+// own doc comment) actually matters most.
+static void mc_check_triangle_sphereline_face(const vec3d &v0, const vec3d &v1, const vec3d &v2, const vec3d &normal,
+	const bvh_uv &uv0, const bvh_uv &uv1, const bvh_uv &uv2, bool has_uv, int ntmap)
 {
 	vec3d e1 = v1 - v0;
 	vec3d e2 = v2 - v0;
 
-	vec3d normal;
-	vm_vec_cross(&normal, &e1, &e2);
-	if (vm_vec_normalize_safe(&normal, true) <= 0.0f)
+	if (vm_vec_mag_squared(&normal) <= 0.0f)
 		return;
 
 	if (!(Mc->flags & MC_COLLIDE_ALL) && vm_vec_dot(&Mc_direction, &normal) > 0.0f)
@@ -500,7 +505,8 @@ static bool mc_check_bvh_triangle_candidate(const bvh_tree *tbvh, int32_t tri_in
 	vec3d v2 = tbvh->vertex(tbvh->tris[idx].i2);
 
 	int prior_num_hits = Mc->num_hits;
-	Mc_triangle_face_test_fn(v0, v1, v2, tbvh->uv0[idx], tbvh->uv1[idx], tbvh->uv2[idx], !flat_poly, ntmap);
+	Mc_triangle_face_test_fn(v0, v1, v2, tbvh->normal[idx], tbvh->uv0[idx], tbvh->uv1[idx], tbvh->uv2[idx], !flat_poly,
+		ntmap);
 	if (Mc->num_hits != prior_num_hits) {
 		Mc->hit_bvh_original_index = tbvh->original_index[idx];
 	}
