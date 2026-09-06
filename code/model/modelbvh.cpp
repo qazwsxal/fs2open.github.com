@@ -517,13 +517,25 @@ bvh_tree bvh_build(SCP_vector<bvh_triangle> triangles)
 	// triangles (collapsed to zero area) get a normal entry too, same convention as everything else
 	// (zero vector, matching vm_vec_normalize_safe(..., true)'s own degenerate fallback).
 	tree.normal.reserve(tree.tris.size());
+	tree.bsphere.reserve(tree.tris.size());
 	for (const bvh_tri_indices& tri : tree.tris) {
-		vec3d e1 = tree.verts[tri.i1] - tree.verts[tri.i0];
-		vec3d e2 = tree.verts[tri.i2] - tree.verts[tri.i0];
+		const vec3d& v0 = tree.verts[tri.i0];
+		const vec3d& v1 = tree.verts[tri.i1];
+		const vec3d& v2 = tree.verts[tri.i2];
+		vec3d e1 = v1 - v0;
+		vec3d e2 = v2 - v0;
 		vec3d n;
 		vm_vec_cross(&n, &e1, &e2);
 		vm_vec_normalize_safe(&n, true);
 		tree.normal.push_back(n);
+
+		// Bounding sphere: centroid + max vertex distance from it -- see bvh_bsphere's own doc
+		// comment (modelbvh.h).
+		bvh_bsphere bs;
+		bs.center = (v0 + v1 + v2) * (1.0f / 3.0f);
+		bs.radius = std::sqrt(std::max({vm_vec_dist_squared(&bs.center, &v0), vm_vec_dist_squared(&bs.center, &v1),
+			vm_vec_dist_squared(&bs.center, &v2)}));
+		tree.bsphere.push_back(bs);
 	}
 
 	return tree;

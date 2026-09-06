@@ -114,6 +114,18 @@ struct bvh_tri_indices {
 // once here at build time instead. Zero vector marks a degenerate (zero-area) triangle, matching
 // vm_vec_normalize_safe(..., true)'s own fallback convention -- callers check magnitude, not a
 // separate flag.
+// Per-triangle bounding sphere (centroid + max vertex distance from it -- a valid, if not minimal,
+// bound), for the leaf-level reject in mc_check_bvh_triangle_candidate() (modelcollide.cpp). The BVH
+// already prunes at *leaf* granularity (LEAF_THRESHOLD triangles at a time); this rejects individual
+// triangles inside an already-visited leaf, cheaper (no sqrt/divide) than running the full plane test
+// on ones nowhere near the query, and skips the vertex-pool gather entirely for rejected triangles.
+// Measured on the real 219-POF corpus as part of the front-to-back-traversal batch (see
+// COLLISION_BVH_NOTES.md): a real, if smaller, contributor on its own (~8% faster in isolation).
+struct bvh_bsphere {
+	vec3d center;
+	float radius = 0.0f;
+};
+
 struct bvh_tree {
 	SCP_vector<bvh_node> nodes;
 
@@ -124,6 +136,7 @@ struct bvh_tree {
 	SCP_vector<int> leaf_index;
 	SCP_vector<bvh_uv> uv0, uv1, uv2;
 	SCP_vector<vec3d> normal; // precomputed unit face normal per triangle -- see doc comment above
+	SCP_vector<bvh_bsphere> bsphere; // precomputed per-triangle bounding sphere -- see doc comment above
 
 	int root = 0;
 
@@ -210,6 +223,16 @@ inline bool ray_aabb_visit(const vec3d& origin, const vec3d& inv_dir, const floa
 	return ray_aabb(origin, inv_dir, inflated_min, inflated_max, t_max, ignored_tmin);
 }
 
+// Same as ray_aabb_visit() above but also reports tmin -- for bvh_visit_triangles()'s front-to-back
+// ordering below, which needs each candidate child's own tmin to sort by.
+inline bool ray_aabb_visit_tmin(const vec3d& origin, const vec3d& inv_dir, const float bmin[3], const float bmax[3],
+	float t_max, float radius, float& out_tmin)
+{
+	float inflated_min[3] = {bmin[0] - radius, bmin[1] - radius, bmin[2] - radius};
+	float inflated_max[3] = {bmax[0] + radius, bmax[1] + radius, bmax[2] + radius};
+	return ray_aabb(origin, inv_dir, inflated_min, inflated_max, t_max, out_tmin);
+}
+
 } // namespace bvh_detail
 
 // Walks the tree, invoking visit(start, count, t_max) for every leaf whose AABB the ray
@@ -227,6 +250,16 @@ inline bool ray_aabb_visit(const vec3d& origin, const vec3d& inv_dir, const floa
 // so far, for a nearest-hit-only query) -- every AABB test after that point uses the tightened
 // value, pruning subtrees that can no longer contain a closer hit. A visitor that needs every hit
 // (MC_COLLIDE_ALL) simply never writes to it, leaving traversal unpruned.
+//
+// Front-to-back: every node's passing children (leaves and internal alike) are sorted by their own
+// tmin and visited/pushed nearest-first, and each stack entry carries the tmin it was computed with
+// so a since-invalidated entry (t_max shrank below it while it sat on the stack) is discarded on pop
+// instead of re-testing its AABB. Measured on the real 219-POF corpus: ~23% faster than the
+// build-order traversal it replaced, by far the single biggest lever of the "big think" batch (see
+// COLLISION_BVH_NOTES.md) -- letting t_max tighten as early as possible is what lets every other
+// per-triangle prune in that batch actually fire. Reshuffles leaf visitation order, which matters for
+// the BARY_EPS triangle-edge tie-break; verified against the full real-ship parity suite before this
+// replaced the build-order traversal.
 template <typename Visitor>
 void bvh_visit_triangles(const bvh_tree& tree, const vec3d& origin, const vec3d& dir, float t_max, float radius,
 	Visitor&& visit)
@@ -239,29 +272,59 @@ void bvh_visit_triangles(const bvh_tree& tree, const vec3d& origin, const vec3d&
 	inv_dir.xyz.y = dir.xyz.y != 0.0f ? 1.0f / dir.xyz.y : FLT_MAX;
 	inv_dir.xyz.z = dir.xyz.z != 0.0f ? 1.0f / dir.xyz.z : FLT_MAX;
 
-	int32_t stack[64];
+	struct StackEntry {
+		int32_t index;
+		int32_t count; // >0: leaf (index is a triangle-array start, matching bvh_node::count[i]'s own
+		               // convention); ==0: internal node
+		float tmin;
+	};
+	StackEntry stack[64];
 	int sp = 0;
-	stack[sp++] = tree.root;
+	stack[sp++] = {tree.root, 0, 0.0f};
 
 	while (sp > 0) {
-		int32_t node_idx = stack[--sp];
-		const bvh_node& node = tree.nodes[node_idx];
+		StackEntry entry = stack[--sp];
+		if (entry.tmin > t_max)
+			continue; // stale: a nearer hit tightened t_max after this entry was queued
 
+		if (entry.count > 0) {
+			visit(entry.index, entry.count, t_max);
+			continue;
+		}
+
+		const bvh_node& node = tree.nodes[entry.index];
+
+		StackEntry candidates[BVH_N];
+		int num_candidates = 0;
 		for (int i = 0; i < BVH_N; ++i) {
 			if (node.child[i] < 0)
 				continue;
 
 			float bmin[3] = {node.minx[i], node.miny[i], node.minz[i]};
 			float bmax[3] = {node.maxx[i], node.maxy[i], node.maxz[i]};
-			if (!bvh_detail::ray_aabb_visit(origin, inv_dir, bmin, bmax, t_max, radius))
+			float tmin;
+			if (!bvh_detail::ray_aabb_visit_tmin(origin, inv_dir, bmin, bmax, t_max, radius, tmin))
 				continue;
 
-			if (node.count[i] > 0) {
-				visit(node.child[i], node.count[i], t_max);
-			} else {
-				Assertion(sp < 64, "modelbvh triangle traversal stack overflow -- tree unexpectedly deep");
-				stack[sp++] = node.child[i];
+			candidates[num_candidates++] = {node.child[i], node.count[i], tmin};
+		}
+
+		// Insertion sort ascending by tmin -- at most BVH_N (4) elements, cheaper than std::sort's
+		// generality for a fixed tiny array.
+		for (int i = 1; i < num_candidates; ++i) {
+			StackEntry key = candidates[i];
+			int j = i - 1;
+			while (j >= 0 && candidates[j].tmin > key.tmin) {
+				candidates[j + 1] = candidates[j];
+				--j;
 			}
+			candidates[j + 1] = key;
+		}
+
+		// Push farthest-first so the nearest candidate is on top of the (LIFO) stack, popped next.
+		for (int i = num_candidates - 1; i >= 0; --i) {
+			Assertion(sp < 64, "modelbvh triangle traversal stack overflow -- tree unexpectedly deep");
+			stack[sp++] = candidates[i];
 		}
 	}
 }

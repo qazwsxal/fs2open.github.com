@@ -12,6 +12,8 @@
 
 #define MODEL_LIB
 
+#include <algorithm>
+
 #include "cmdline/cmdline.h"
 #include "globalincs/systemvars.h" // for Framecount -- see model_collide_get_submodel_bvh()
 #include "graphics/tmapper.h"
@@ -337,6 +339,33 @@ bool mc_triangle_edges_sphereline(const vec3d &v0, const vec3d &v1, const vec3d 
 	return found;
 }
 
+// fvi_sphere_plane()'s (math/fvi.cpp) own math minus the intersect_point projection -- lets
+// mc_check_triangle_sphereline_face() below defer that projection until it's confirmed actually
+// needed (see the call site's own comment). Kept local rather than added to fvi.cpp since this is
+// the only caller. Same t1/t2 solve, same postcondition.
+static int mc_sphere_plane_times_only(const vec3d *sphere_center_start, const vec3d *sphere_velocity,
+	float sphere_radius, const vec3d *plane_normal, const vec3d *plane_point, float *hit_time, float *crossing_time)
+{
+	float D = -vm_vec_dot(plane_normal, plane_point);
+	float xs0_dot_norm = vm_vec_dot(plane_normal, sphere_center_start);
+	float vs_dot_norm = vm_vec_dot(plane_normal, sphere_velocity);
+	float t1, t2;
+
+	if (fabsf(vs_dot_norm) > 1e-30f) {
+		t1 = (-D - xs0_dot_norm + sphere_radius) / vs_dot_norm;
+		t2 = (-D - xs0_dot_norm - sphere_radius) / vs_dot_norm;
+	} else {
+		return 0;
+	}
+
+	if (t2 < t1) {
+		std::swap(t1, t2);
+	}
+	*hit_time = t1;
+	*crossing_time = t2 - t1;
+	return (t1 < 1.0f) && (t2 > 0.0f);
+}
+
 // Sphereline sibling of mc_check_triangle_face() above: a sphere-vs-plane touch-time face test, then
 // an edge fallback against the triangle's own exact plane/edges. The edge fallback deliberately
 // checks this triangle's own 3 edges, unconditionally -- including whichever edge may be a
@@ -358,9 +387,13 @@ static void mc_check_triangle_sphereline_face(const vec3d &v0, const vec3d &v1, 
 	if (!(Mc->flags & MC_COLLIDE_ALL) && vm_vec_dot(&Mc_direction, &normal) > 0.0f)
 		return;
 
+	// fvi_sphere_plane()'s own point projection only runs when face_t is in (0,1), but that's not
+	// sufficient to know it's actually needed -- the num_hits/hit_dist gate below can still disable
+	// check_face afterward, wasting the projection. Times-only here instead; the point is computed
+	// lazily inside `if (check_face)` below, only once it's confirmed to actually be needed.
 	vec3d hit_point;
 	float face_t, delta_t;
-	if (!fvi_sphere_plane(&hit_point, &Mc_p0, &Mc_direction, Mc->radius, &normal, &v0, &face_t, &delta_t))
+	if (!mc_sphere_plane_times_only(&Mc_p0, &Mc_direction, Mc->radius, &normal, &v0, &face_t, &delta_t))
 		return;
 
 	int check_face = 1;
@@ -377,9 +410,21 @@ static void mc_check_triangle_sphereline_face(const vec3d &v0, const vec3d &v1, 
 
 	if (!(Mc->flags & MC_COLLIDE_ALL) && Mc->num_hits && (face_t >= Mc->hit_dist)) {
 		check_face = 0;
+		// Every contact point on this triangle -- face, edge, or vertex -- lies in this same plane,
+		// so its time is >= face_t (the earliest the plane itself is reached) >= Mc->hit_dist
+		// already. check_edges can be cleared here too, exactly (not just conservatively) -- provably
+		// cannot find anything better than the hit that disabled check_face above. Measured as the
+		// single biggest lever of this file's "big think" batch of changes when combined with
+		// front-to-back traversal (see bvh_visit_triangles(), modelbvh.h): letting t_max tighten
+		// early is what makes this gate actually fire often.
+		check_edges = 0;
 	}
 
 	if (check_face) {
+		vec3d v_temp;
+		vm_vec_scale_add(&v_temp, &Mc_p0, &Mc_direction, face_t);
+		vm_project_point_onto_plane(&hit_point, &v_temp, &normal, &v0);
+
 		vec3d vp0 = hit_point - v0;
 		float d00 = vm_vec_dot(&e1, &e1);
 		float d01 = vm_vec_dot(&e1, &e2);
@@ -495,6 +540,23 @@ static bool mc_check_bvh_triangle_candidate(const bvh_tree *tbvh, int32_t tri_in
 	if (raw_tmap_num < MAX_MODEL_TEXTURES && !check_invisible_faces &&
 		Mc_pm->maps[raw_tmap_num].textures[TM_BASE_TYPE].GetTexture() < 0 && !collide_invisible) {
 		return false;
+	}
+
+	// The BVH already prunes at leaf granularity (LEAF_THRESHOLD triangles at a time); this rejects
+	// individual triangles inside an already-visited leaf using each triangle's own precomputed
+	// bounding sphere -- cheaper (no sqrt/divide) than the full plane test, and skips the
+	// vertex-pool gather below entirely for rejected triangles. Mc->radius defaults to 0 for plain
+	// ray queries, degenerating this correctly into a segment-vs-sphere reject.
+	{
+		const bvh_bsphere &bs = tbvh->bsphere[idx];
+		vec3d w = bs.center - Mc_p0;
+		float vs_sqr = vm_vec_mag_squared(&Mc_direction);
+		float s = (vs_sqr > 0.0f) ? std::clamp(vm_vec_dot(&w, &Mc_direction) / vs_sqr, 0.0f, 1.0f) : 0.0f;
+		vec3d closest = Mc_p0 + Mc_direction * s;
+		float rr = Mc->radius + bs.radius;
+		if (vm_vec_dist_squared(&closest, &bs.center) > rr * rr) {
+			return false;
+		}
 	}
 
 	bool flat_poly = raw_tmap_num >= MAX_MODEL_TEXTURES;
